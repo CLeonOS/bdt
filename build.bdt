@@ -1,0 +1,11 @@
+[module]
+name = bdt
+type = executable
+languages = c
+
+[sources]
+files = src/main.c, src/cache.c, src/config.c, src/executor.c, src/graph.c, src/hash.c, src/lang.c, src/log.c, src/project.c, src/scanner.c, src/toolchain.c, src/util.c
+headers = src/bdt.h
+
+[outputs]
+executable = build/bdt

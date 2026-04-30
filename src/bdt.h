@@ -1,0 +1,157 @@
+#ifndef BDT_H
+#define BDT_H
+
+#include <stddef.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <time.h>
+
+#define BDT_MAX_ITEMS 256
+#define BDT_MAX_TEXT 4096
+
+typedef enum {
+    BDT_LANG_EN = 0,
+    BDT_LANG_ZH = 1
+} BdtLanguage;
+
+typedef enum {
+    BDT_LOG_DEBUG = 0,
+    BDT_LOG_INFO,
+    BDT_LOG_STEP,
+    BDT_LOG_WARN,
+    BDT_LOG_ERROR
+} BdtLogLevel;
+
+typedef struct {
+    char key[96];
+    char value[BDT_MAX_TEXT];
+} BdtPair;
+
+typedef struct {
+    char name[96];
+    char sources[BDT_MAX_TEXT];
+    char source_dirs[BDT_MAX_TEXT];
+    char exclude_sources[BDT_MAX_TEXT];
+    char cflags[BDT_MAX_TEXT];
+} BdtAppRule;
+
+typedef struct {
+    char name[96];
+    BdtPair items[BDT_MAX_ITEMS];
+    size_t item_count;
+} BdtSection;
+
+typedef struct {
+    BdtSection sections[BDT_MAX_ITEMS];
+    size_t section_count;
+} BdtConfig;
+
+typedef struct {
+    char name[96];
+    char type[64];
+    char deps[BDT_MAX_TEXT];
+    char command[BDT_MAX_TEXT];
+    char steps[BDT_MAX_TEXT];
+    char inputs[BDT_MAX_TEXT];
+    char outputs[BDT_MAX_TEXT];
+    char sources[BDT_MAX_TEXT];
+    char source_dirs[BDT_MAX_TEXT];
+    char objects[BDT_MAX_TEXT];
+    char output[1024];
+    char flags[BDT_MAX_TEXT];
+    char cflags[BDT_MAX_TEXT];
+    char cxxflags[BDT_MAX_TEXT];
+    char asflags[BDT_MAX_TEXT];
+    char ldflags[BDT_MAX_TEXT];
+    char includes[BDT_MAX_TEXT];
+    char linker_script[1024];
+    char tool[128];
+    char common_dirs[BDT_MAX_TEXT];
+    char main_dir[1024];
+    char runtime_sources[BDT_MAX_TEXT];
+    char system_output[1024];
+    char system_linker_script[1024];
+    char uwm_output[1024];
+    char uwm_apps[BDT_MAX_TEXT];
+    char skip_apps[BDT_MAX_TEXT];
+    BdtAppRule app_rules[BDT_MAX_ITEMS];
+    size_t app_rule_count;
+    int always;
+    int cache;
+    int parallel;
+    int visited;
+    int active;
+    int done;
+} BdtTarget;
+
+typedef struct {
+    char root[1024];
+    char name[128];
+    char default_target[96];
+    char build_dir[1024];
+    char language[32];
+    BdtLanguage lang;
+    BdtPair vars[BDT_MAX_ITEMS];
+    size_t var_count;
+    BdtTarget targets[BDT_MAX_ITEMS];
+    size_t target_count;
+    char subprojects[BDT_MAX_ITEMS][512];
+    size_t subproject_count;
+    char build_files[BDT_MAX_ITEMS][1024];
+    size_t build_file_count;
+} BdtProject;
+
+typedef struct {
+    int argc;
+    char **argv;
+    const char *target;
+    const char *project_file;
+    int jobs;
+    int list;
+    int scan;
+    int graph;
+    int no_cache;
+    int verbose;
+} BdtCli;
+
+void bdt_log_init(BdtLanguage lang, int verbose);
+void bdt_log(BdtLogLevel level, const char *fmt, ...);
+void bdt_log_progress(size_t current, size_t total, const char *label);
+const char *bdt_msg(BdtLanguage lang, const char *key);
+BdtLanguage bdt_lang_from_text(const char *s);
+
+int bdt_read_config(const char *path, BdtConfig *config);
+const char *bdt_config_get(const BdtConfig *config, const char *section, const char *key);
+
+int bdt_load_project(const char *root, const char *project_file, BdtProject *project);
+int bdt_scan_build_files(BdtProject *project);
+void bdt_print_scan(const BdtProject *project);
+void bdt_print_targets(const BdtProject *project);
+void bdt_print_graph(const BdtProject *project);
+
+BdtTarget *bdt_find_target(BdtProject *project, const char *name);
+int bdt_run_target(BdtProject *project, const char *name, int no_cache);
+int bdt_run_command_target(BdtProject *project, BdtTarget *target, int no_cache);
+int bdt_run_c_apps_target(BdtProject *project, BdtTarget *target);
+
+uint64_t bdt_hash_file(const char *path);
+uint64_t bdt_hash_text(const char *text);
+uint64_t bdt_hash_target_inputs(const BdtProject *project, const BdtTarget *target);
+int bdt_cache_is_fresh(const BdtProject *project, const BdtTarget *target, uint64_t hash);
+int bdt_cache_store(const BdtProject *project, const BdtTarget *target, uint64_t hash);
+
+int bdt_mkdirs(const char *path);
+int bdt_file_exists(const char *path);
+int bdt_dir_exists(const char *path);
+int bdt_path_join(char *out, size_t out_size, const char *a, const char *b);
+int bdt_abs_path(char *out, size_t out_size, const char *path);
+char *bdt_trim(char *s);
+int bdt_split_list(const char *text, char items[][512], size_t max_items);
+int bdt_split_delim(const char *text, char delim, char items[][512], size_t max_items);
+int bdt_expand_vars(const BdtProject *project, const char *input, char *out, size_t out_size);
+int bdt_expand_list_vars(const BdtProject *project, const char *input, char *out, size_t out_size);
+int bdt_parse_cli(int argc, char **argv, BdtCli *cli);
+int bdt_command_exists(const char *cmd);
+void bdt_load_toolchain(BdtProject *project, const BdtConfig *config);
+
+#endif
