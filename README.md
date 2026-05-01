@@ -18,6 +18,8 @@ dependencies, runs toolchain commands, and emits structured build logs.
 - Chinese and English message support.
 - ncurses project structure viewer with targets, dependencies, plugins, cache,
   build files, and subprojects.
+- `why`, `status`, and `trace` commands for build ownership, rebuild previews,
+  and JSON build event traces.
 - C application builder support for CLeonOS user programs.
 
 ## Build
@@ -335,6 +337,9 @@ build/bdt/bdt --list
 build/bdt/bdt --scan
 build/bdt/bdt --graph
 build/bdt/bdt view
+build/bdt/bdt why src/main.c
+build/bdt/bdt status app
+build/bdt/bdt trace app --trace-out build/trace.json
 build/bdt/bdt iso -j 4
 build/bdt/bdt explain iso
 build/bdt/bdt clean kernel-objects
@@ -353,6 +358,13 @@ Useful flags:
 - `view`: open an ncurses project structure viewer. It loads ncurses at runtime,
   so normal builds still work without ncurses; install `libncurses` if this
   command reports that ncurses is unavailable.
+- `why <file|target>`: explain which target owns a target name or references a
+  source, object, output, or configured path.
+- `status [target]`: preview what would rebuild. For large `c-apps` targets this
+  uses a fast cache approximation; the actual build still performs full hash
+  validation.
+- `trace [target] [--trace-out file]`: run a build and write a JSON event trace
+  with target, command, compile/link cache, return code, and duration events.
 - `--verbose`: print shell commands before running them.
 - `-j N`: set job count. Current target types may still run serially unless
   they implement parallel execution.

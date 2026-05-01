@@ -148,6 +148,18 @@ int bdt_parse_cli(int argc, char **argv, BdtCli *cli) {
         else if (!strcmp(a, "--scan")) cli->scan = 1;
         else if (!strcmp(a, "--graph")) cli->graph = 1;
         else if (!strcmp(a, "view") || !strcmp(a, "--view")) cli->view = 1;
+        else if (!strcmp(a, "why")) {
+            cli->why = 1;
+            if (i + 1 < argc && argv[i + 1][0] != '-') cli->why_query = argv[++i];
+        }
+        else if (!strcmp(a, "status")) {
+            cli->status = 1;
+            if (i + 1 < argc && argv[i + 1][0] != '-') cli->status_target = argv[++i];
+        }
+        else if (!strcmp(a, "trace")) {
+            cli->trace = 1;
+            if (i + 1 < argc && argv[i + 1][0] != '-') cli->trace_target = argv[++i];
+        }
         else if (!strcmp(a, "explain")) {
             cli->explain = 1;
             if (i + 1 < argc && argv[i + 1][0] != '-') cli->explain_target = argv[++i];
@@ -167,10 +179,14 @@ int bdt_parse_cli(int argc, char **argv, BdtCli *cli) {
             if (i + 1 < argc && argv[i + 1][0] != '-') cli->cache_arg = argv[++i];
         }
         else if (!strcmp(a, "--no-cache")) cli->no_cache = 1;
+        else if (!strcmp(a, "--trace-out") && i + 1 < argc) cli->trace_path = argv[++i];
         else if (!strcmp(a, "-v") || !strcmp(a, "--verbose")) cli->verbose = 1;
         else if (!strcmp(a, "-h") || !strcmp(a, "--help")) {
             printf("bdt [target] [--project file] [-j N] [--list] [--scan] [--graph] [--no-cache]\n");
             printf("bdt view\n");
+            printf("bdt why <file|target>\n");
+            printf("bdt status [target]\n");
+            printf("bdt trace [target] [--trace-out file]\n");
             printf("bdt explain <target>\n");
             printf("bdt clean <target>\n");
             printf("bdt doctor\n");

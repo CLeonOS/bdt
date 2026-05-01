@@ -24,6 +24,7 @@ int main(int argc, char **argv) {
     bdt_log_init(project->lang, cli.verbose);
 
     if (cli.scan) {
+        bdt_scan_build_files(project);
         bdt_print_scan(project);
         free(project);
         return 0;
@@ -39,7 +40,19 @@ int main(int argc, char **argv) {
         return 0;
     }
     if (cli.view) {
+        bdt_scan_build_files(project);
         int rc = bdt_view_project(project);
+        free(project);
+        return rc == 0 ? 0 : 1;
+    }
+    if (cli.why) {
+        int rc = bdt_why_query(project, cli.why_query);
+        free(project);
+        return rc == 0 ? 0 : 1;
+    }
+    if (cli.status) {
+        const char *name = cli.status_target ? cli.status_target : NULL;
+        int rc = bdt_status_project(project, name);
         free(project);
         return rc == 0 ? 0 : 1;
     }
@@ -67,7 +80,24 @@ int main(int argc, char **argv) {
     }
 
     const char *target = cli.target ? cli.target : project->default_target;
+    if (cli.trace && cli.trace_target) target = cli.trace_target;
+    if (cli.trace) {
+        char default_trace[1024];
+        const char *trace_path = cli.trace_path;
+        if (!trace_path) {
+            char build_root[1024];
+            bdt_path_join(build_root, sizeof(build_root), project->root, project->build_dir);
+            bdt_mkdirs(build_root);
+            bdt_path_join(default_trace, sizeof(default_trace), build_root, "trace.json");
+            trace_path = default_trace;
+        }
+        if (bdt_trace_begin(project, trace_path) != 0) {
+            free(project);
+            return 1;
+        }
+    }
     int rc = bdt_run_target(project, target, cli.no_cache) == 0 ? 0 : 1;
+    if (cli.trace) bdt_trace_end(rc);
     free(project);
     return rc;
 }

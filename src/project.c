@@ -210,7 +210,6 @@ int bdt_load_project(const char *root, const char *project_file, BdtProject *pro
     snprintf(project->cache_config.push_command, sizeof(project->cache_config.push_command), "%s", cache_push ? cache_push : "");
     load_plugins(project, config);
     load_targets(project, config);
-    bdt_scan_build_files(project);
     free(config);
     return 0;
 }

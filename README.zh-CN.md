@@ -16,6 +16,7 @@ bdt (Build Tool) 是一个用 C 编写的小型构建工具，面向 CLeonOS，�
 - ANSI 彩色日志和编译进度条。
 - 中文和英文日志。
 - ncurses 项目结构查看器，可查看 targets、依赖、插件、缓存、构建文件和子项目。
+- `why`、`status` 和 `trace` 命令，用于查看构建归属、重建预览和 JSON 构建事件追踪。
 - 支持 CLeonOS 用户态应用构建规则。
 
 ## 构建 bdt
@@ -329,6 +330,9 @@ build/bdt/bdt --list
 build/bdt/bdt --scan
 build/bdt/bdt --graph
 build/bdt/bdt view
+build/bdt/bdt why src/main.c
+build/bdt/bdt status app
+build/bdt/bdt trace app --trace-out build/trace.json
 build/bdt/bdt iso -j 4
 build/bdt/bdt explain iso
 build/bdt/bdt clean kernel-objects
@@ -346,6 +350,12 @@ build/bdt/bdt cache push
 - `--graph`：输出 target 依赖关系。
 - `view`：打开 ncurses 项目结构查看器。它在运行时加载 ncurses，所以普通构建
   不依赖 ncurses；如果该命令提示 ncurses 不可用，安装 `libncurses` 即可。
+- `why <file|target>`：解释某个 target 名称，或某个源码、对象、输出、配置路径
+  被哪个 target 引用。
+- `status [target]`：预览本轮会重建什么。大型 `c-apps` target 会使用快速缓存
+  近似判断；真正构建仍然执行完整 hash 校验。
+- `trace [target] [--trace-out file]`：执行一次构建，并写出 JSON 事件追踪，包含
+  target、command、compile/link cache、返回码和耗时。
 - `--verbose`：执行命令前打印完整 shell 命令。
 - `-j N`：设置并行数。当前部分 target 类型仍可能串行执行。
 - `--no-cache`：忽略缓存检查。

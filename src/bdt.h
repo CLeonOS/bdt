@@ -142,12 +142,19 @@ typedef struct {
     int graph;
     int view;
     int explain;
+    int why;
+    int status;
+    int trace;
     int clean_target;
     int doctor;
     int cache_cmd;
     int no_cache;
     int verbose;
     const char *explain_target;
+    const char *why_query;
+    const char *status_target;
+    const char *trace_target;
+    const char *trace_path;
     const char *clean_name;
     const char *cache_action;
     const char *cache_arg;
@@ -168,11 +175,14 @@ void bdt_print_scan(const BdtProject *project);
 void bdt_print_targets(const BdtProject *project);
 void bdt_print_graph(const BdtProject *project);
 int bdt_view_project(const BdtProject *project);
+int bdt_status_project(BdtProject *project, const char *name);
+int bdt_why_query(BdtProject *project, const char *query);
 
 BdtTarget *bdt_find_target(BdtProject *project, const char *name);
 int bdt_run_target(BdtProject *project, const char *name, int no_cache);
 int bdt_run_command_target(BdtProject *project, BdtTarget *target, int no_cache);
 int bdt_run_c_apps_target(BdtProject *project, BdtTarget *target);
+int bdt_c_apps_status(BdtProject *project, BdtTarget *target, size_t *compile_count, size_t *link_count, size_t *app_relink_count);
 int bdt_run_plugin_target(BdtProject *project, BdtTarget *target);
 BdtPlugin *bdt_find_plugin(BdtProject *project, const char *name);
 
@@ -183,10 +193,14 @@ int bdt_cache_is_fresh(const BdtProject *project, const BdtTarget *target, uint6
 int bdt_cache_store(const BdtProject *project, const BdtTarget *target, uint64_t hash);
 int bdt_compile_cache_fresh(const BdtProject *project, const BdtTarget *target, const char *src, const char *obj,
                             const char *dep, const char *tool, const char *flags, char *reason, size_t reason_size);
+int bdt_compile_cache_quick_fresh(const BdtProject *project, const BdtTarget *target, const char *src, const char *obj,
+                                  const char *dep, const char *tool, const char *flags, char *reason, size_t reason_size);
 int bdt_compile_cache_store(const BdtProject *project, const BdtTarget *target, const char *src, const char *obj,
                             const char *dep, const char *tool, const char *flags);
 int bdt_link_cache_fresh(const BdtProject *project, const BdtTarget *target, const char *out, const char *objects,
                          const char *tool, const char *flags, const char *script, char *reason, size_t reason_size);
+int bdt_link_cache_quick_fresh(const BdtProject *project, const BdtTarget *target, const char *out, const char *objects,
+                               const char *tool, const char *flags, const char *script, char *reason, size_t reason_size);
 int bdt_link_cache_store(const BdtProject *project, const BdtTarget *target, const char *out, const char *objects,
                          const char *tool, const char *flags, const char *script);
 uint64_t bdt_hash_depfile(const BdtProject *project, const char *depfile);
@@ -196,6 +210,10 @@ int bdt_explain_target(BdtProject *project, const char *name);
 int bdt_clean_named_target(BdtProject *project, const char *name);
 int bdt_doctor(BdtProject *project);
 int bdt_cache_command(BdtProject *project, const char *action, const char *arg);
+int bdt_trace_begin(const BdtProject *project, const char *path);
+void bdt_trace_end(int rc);
+int bdt_trace_enabled(void);
+void bdt_trace_event(const char *kind, const char *target, const char *detail, int rc, long duration_ms);
 
 int bdt_mkdirs(const char *path);
 int bdt_file_exists(const char *path);

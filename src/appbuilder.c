@@ -8,6 +8,10 @@
 #include <dirent.h>
 #endif
 
+static long elapsed_ms(clock_t start) {
+    return (long)(((clock() - start) * 1000) / CLOCKS_PER_SEC);
+}
+
 typedef struct {
     char path[1024];
     char rel[1024];
@@ -190,11 +194,15 @@ static int compile_one_scoped(BdtProject *project, BdtTarget *target, const char
     if (compiled_out) *compiled_out = 0;
     if (target->cache && bdt_compile_cache_fresh(project, target, src, obj_out, dep, tool, all_flags, reason, sizeof(reason))) {
         bdt_log(BDT_LOG_DEBUG, "skip %s: %s", rel, reason);
+        bdt_trace_event("compile-cache-hit", target->name, rel, 0, 0);
         return 0;
     }
+    bdt_trace_event("compile-cache-miss", target->name, rel, 0, 0);
     snprintf(cmd, sizeof(cmd), "%s %s -MMD -MP -MF \"%s\" -c \"%s\" -o \"%s\"", tool, all_flags, dep, src, obj_out);
     bdt_log(BDT_LOG_DEBUG, "%s", cmd);
+    clock_t start = clock();
     int rc = run_cmd(cmd);
+    bdt_trace_event("compile", target->name, rel, rc, elapsed_ms(start));
     if (rc == 0 && compiled_out) *compiled_out = 1;
     if (rc == 0 && target->cache) bdt_compile_cache_store(project, target, src, obj_out, dep, tool, all_flags);
     return rc;
@@ -216,7 +224,7 @@ static int compile_one_needs_scoped(BdtProject *project, BdtTarget *target, cons
     obj_for_app_rel(obj_root, obj_scope, rel, obj_out, obj_out_size);
     snprintf(dep, sizeof(dep), "%s.d", obj_out);
     if (!target->cache) return 1;
-    return !bdt_compile_cache_fresh(project, target, src, obj_out, dep, tool, all_flags, reason, sizeof(reason));
+    return !bdt_compile_cache_quick_fresh(project, target, src, obj_out, dep, tool, all_flags, reason, sizeof(reason));
 }
 
 static int compile_one_needs(BdtProject *project, BdtTarget *target, const char *extra_cflags, const char *src,
@@ -231,11 +239,15 @@ static int link_app(BdtProject *project, BdtTarget *target, const char *out, con
     bdt_expand_list_vars(project, target->ldflags, flags, sizeof(flags));
     if (target->cache && bdt_link_cache_fresh(project, target, out, objects, tool, flags, linker, reason, sizeof(reason))) {
         bdt_log(BDT_LOG_DEBUG, "skip link %s: %s", out, reason);
+        bdt_trace_event("link-cache-hit", target->name, out, 0, 0);
         return 0;
     }
+    bdt_trace_event("link-cache-miss", target->name, out, 0, 0);
     snprintf(cmd, sizeof(cmd), "%s %s -T \"%s\" -o \"%s\" %s", tool, flags, linker, out, objects);
     bdt_log(BDT_LOG_DEBUG, "%s", cmd);
+    clock_t start = clock();
     int rc = run_cmd(cmd);
+    bdt_trace_event("link", target->name, out, rc, elapsed_ms(start));
     if (rc == 0 && linked_out) *linked_out = 1;
     if (rc == 0 && target->cache) bdt_link_cache_store(project, target, out, objects, tool, flags, linker);
     return rc;
@@ -246,7 +258,7 @@ static int link_app_needs(BdtProject *project, BdtTarget *target, const char *ou
     bdt_expand_vars(project, target->tool[0] ? "{LD}" : "{LD}", tool, sizeof(tool));
     bdt_expand_list_vars(project, target->ldflags, flags, sizeof(flags));
     if (!target->cache) return 1;
-    return !bdt_link_cache_fresh(project, target, out, objects, tool, flags, linker, reason, sizeof(reason));
+    return !bdt_link_cache_quick_fresh(project, target, out, objects, tool, flags, linker, reason, sizeof(reason));
 }
 
 static void progress_step(size_t *current, size_t total, const char *label) {
@@ -328,7 +340,8 @@ static int compile_rule_sources(BdtProject *project, BdtTarget *target, const ch
     return 0;
 }
 
-int bdt_run_c_apps_target(BdtProject *project, BdtTarget *target) {
+static int compute_c_apps_status(BdtProject *project, BdtTarget *target, size_t *compile_count, size_t *link_count,
+                                 size_t *app_relink_count, int emit_cache_hit) {
     char main_dir[1024], obj_root[1024], out_dir[1024], linker[1024], entry_suffix[64], secondary_suffix[64];
     bdt_expand_vars(project, target->main_dir, main_dir, sizeof(main_dir));
     bdt_expand_vars(project, target->objects, obj_root, sizeof(obj_root));
@@ -356,7 +369,10 @@ int bdt_run_c_apps_target(BdtProject *project, BdtTarget *target) {
         collect_c_files(project, dir, files, &count, 1, ".c");
         for (size_t i = 0; i < count; ++i) {
             char obj[1024];
-            if (compile_one_needs(project, target, NULL, files[i].path, files[i].rel, obj_root, obj, sizeof(obj))) total_steps++;
+            if (compile_one_needs(project, target, NULL, files[i].path, files[i].rel, obj_root, obj, sizeof(obj))) {
+                total_steps++;
+                if (compile_count) (*compile_count)++;
+            }
             append_object_unique(count_shared_objs, sizeof(count_shared_objs), obj);
         }
     }
@@ -367,7 +383,10 @@ int bdt_run_c_apps_target(BdtProject *project, BdtTarget *target) {
         char src[1024], rel[1024], obj[1024];
         bdt_expand_vars(project, count_runtime_sources[r], src, sizeof(src));
         rel_from_root(project, src, rel, sizeof(rel));
-        if (compile_one_needs(project, target, NULL, src, rel, obj_root, obj, sizeof(obj))) total_steps++;
+        if (compile_one_needs(project, target, NULL, src, rel, obj_root, obj, sizeof(obj))) {
+            total_steps++;
+            if (compile_count) (*compile_count)++;
+        }
         append_object_unique(count_shared_runtime_objs, sizeof(count_shared_runtime_objs), obj);
     }
     AppFile count_mains[BDT_MAX_ITEMS];
@@ -383,12 +402,17 @@ int bdt_run_c_apps_target(BdtProject *project, BdtTarget *target) {
         if (list_contains(target->skip_apps, app)) continue;
         char obj[1024], objects[BDT_MAX_TEXT * 8], out[1024];
         const BdtAppRule *rule = find_app_rule(target, app);
-        if (compile_one_needs(project, target, rule ? rule->cflags : NULL, count_mains[i].path, count_mains[i].rel, obj_root, obj, sizeof(obj))) total_steps++;
+        if (compile_one_needs(project, target, rule ? rule->cflags : NULL, count_mains[i].path, count_mains[i].rel, obj_root, obj, sizeof(obj))) {
+            total_steps++;
+            if (compile_count) (*compile_count)++;
+        }
         snprintf(objects, sizeof(objects), "%s \"%s\"", count_shared_objs, obj);
         if ((!rule || rule->include_runtime) && !list_contains(target->runtime_exclude_apps, app)) {
             strncat(objects, count_shared_runtime_objs, sizeof(objects) - strlen(objects) - 1);
         }
-        total_steps += count_rule_sources_needs(project, target, app, rule, obj_root, objects, sizeof(objects));
+        size_t rule_needs = count_rule_sources_needs(project, target, app, rule, obj_root, objects, sizeof(objects));
+        total_steps += rule_needs;
+        if (compile_count) *compile_count += rule_needs;
         AppFile top_extras[BDT_MAX_ITEMS];
         size_t top_extra_count = 0;
         collect_c_files(project, main_dir, top_extras, &top_extra_count, 0, ".c");
@@ -404,7 +428,10 @@ int bdt_run_c_apps_target(BdtProject *project, BdtTarget *target) {
             obj_for_rel(obj_root, top_extras[e].rel, shared_obj, sizeof(shared_obj));
             if (object_list_contains(count_shared_objs, shared_obj) || object_list_contains(count_shared_runtime_objs, shared_obj)) continue;
             char extra_obj[1024];
-            if (compile_one_needs_scoped(project, target, rule ? rule->cflags : NULL, top_extras[e].path, top_extras[e].rel, app, obj_root, extra_obj, sizeof(extra_obj))) total_steps++;
+            if (compile_one_needs_scoped(project, target, rule ? rule->cflags : NULL, top_extras[e].path, top_extras[e].rel, app, obj_root, extra_obj, sizeof(extra_obj))) {
+                total_steps++;
+                if (compile_count) (*compile_count)++;
+            }
             append_object_unique(objects, sizeof(objects), extra_obj);
         }
         char app_subdir[1024];
@@ -419,7 +446,10 @@ int bdt_run_c_apps_target(BdtProject *project, BdtTarget *target) {
             obj_for_rel(obj_root, extras[e].rel, shared_obj, sizeof(shared_obj));
             if (object_list_contains(count_shared_objs, shared_obj) || object_list_contains(count_shared_runtime_objs, shared_obj)) continue;
             char extra_obj[1024];
-            if (compile_one_needs_scoped(project, target, rule ? rule->cflags : NULL, extras[e].path, extras[e].rel, app, obj_root, extra_obj, sizeof(extra_obj))) total_steps++;
+            if (compile_one_needs_scoped(project, target, rule ? rule->cflags : NULL, extras[e].path, extras[e].rel, app, obj_root, extra_obj, sizeof(extra_obj))) {
+                total_steps++;
+                if (compile_count) (*compile_count)++;
+            }
             append_object_unique(objects, sizeof(objects), extra_obj);
         }
         const BdtOutputGroup *group = output_group_for_app(target, app, rule);
@@ -430,7 +460,11 @@ int bdt_run_c_apps_target(BdtProject *project, BdtTarget *target) {
         char app_elf[256];
         snprintf(app_elf, sizeof(app_elf), "%s.elf", app);
         bdt_path_join(out, sizeof(out), dest, app_elf);
-        if (link_app_needs(project, target, out, linker_buf[0] ? linker_buf : linker, objects)) total_steps++;
+        if (link_app_needs(project, target, out, linker_buf[0] ? linker_buf : linker, objects)) {
+            total_steps++;
+            if (link_count) (*link_count)++;
+            if (app_relink_count) (*app_relink_count)++;
+        }
     }
     AppFile count_secondary[BDT_MAX_ITEMS];
     size_t count_secondary_count = 0;
@@ -442,7 +476,10 @@ int bdt_run_c_apps_target(BdtProject *project, BdtTarget *target) {
         snprintf(app, sizeof(app), "%s", base);
         char *suffix = strstr(app, secondary_suffix);
         if (suffix) *suffix = 0;
-        if (compile_one_needs(project, target, NULL, count_secondary[i].path, count_secondary[i].rel, obj_root, obj, sizeof(obj))) total_steps++;
+        if (compile_one_needs(project, target, NULL, count_secondary[i].path, count_secondary[i].rel, obj_root, obj, sizeof(obj))) {
+            total_steps++;
+            if (compile_count) (*compile_count)++;
+        }
         const BdtOutputGroup *group = find_output_group(target, target->secondary_output_group);
         char group_out[1024], group_linker[1024];
         bdt_expand_vars(project, group && group->output[0] ? group->output : target->output, group_out, sizeof(group_out));
@@ -451,10 +488,41 @@ int bdt_run_c_apps_target(BdtProject *project, BdtTarget *target) {
         snprintf(app_elf, sizeof(app_elf), "%s.elf", app);
         bdt_path_join(out, sizeof(out), group_out[0] ? group_out : out_dir, app_elf);
         snprintf(objects, sizeof(objects), "\"%s\"", obj);
-        if (link_app_needs(project, target, out, group_linker[0] ? group_linker : linker, objects)) total_steps++;
+        if (link_app_needs(project, target, out, group_linker[0] ? group_linker : linker, objects)) {
+            total_steps++;
+            if (link_count) (*link_count)++;
+            if (app_relink_count) (*app_relink_count)++;
+        }
     }
-    if (total_steps == 0 && target->cache) bdt_log(BDT_LOG_INFO, "%s: %s", bdt_msg(project->lang, "cache_hit"), target->name);
+    if (total_steps == 0 && target->cache && emit_cache_hit) bdt_log(BDT_LOG_INFO, "%s: %s", bdt_msg(project->lang, "cache_hit"), target->name);
+    return (int)total_steps;
+}
+
+int bdt_c_apps_status(BdtProject *project, BdtTarget *target, size_t *compile_count, size_t *link_count, size_t *app_relink_count) {
+    if (compile_count) *compile_count = 0;
+    if (link_count) *link_count = 0;
+    if (app_relink_count) *app_relink_count = 0;
+    compute_c_apps_status(project, target, compile_count, link_count, app_relink_count, 0);
+    return 0;
+}
+
+int bdt_run_c_apps_target(BdtProject *project, BdtTarget *target) {
+    size_t total_steps = (size_t)compute_c_apps_status(project, target, NULL, NULL, NULL, 1);
     size_t progress = 0;
+    char main_dir[1024], obj_root[1024], out_dir[1024], linker[1024], entry_suffix[64], secondary_suffix[64];
+    bdt_expand_vars(project, target->main_dir, main_dir, sizeof(main_dir));
+    bdt_expand_vars(project, target->objects, obj_root, sizeof(obj_root));
+    bdt_expand_vars(project, target->output, out_dir, sizeof(out_dir));
+    bdt_expand_vars(project, target->linker_script, linker, sizeof(linker));
+    bdt_expand_vars(project, target->entry_suffix[0] ? target->entry_suffix : "_main.c", entry_suffix, sizeof(entry_suffix));
+    bdt_expand_vars(project, target->secondary_entry_suffix, secondary_suffix, sizeof(secondary_suffix));
+    bdt_mkdirs(obj_root);
+    bdt_mkdirs(out_dir);
+    for (size_t g = 0; g < target->output_group_count; ++g) {
+        char group_out[1024];
+        bdt_expand_vars(project, target->output_groups[g].output, group_out, sizeof(group_out));
+        if (group_out[0]) bdt_mkdirs(group_out);
+    }
 
     char shared_objs[BDT_MAX_TEXT * 8] = "";
     char dirs[BDT_MAX_ITEMS][512];

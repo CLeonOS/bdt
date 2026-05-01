@@ -3,6 +3,11 @@
 #include <inttypes.h>
 #include <stdlib.h>
 #include <string.h>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/stat.h>
+#endif
 
 static int cache_path(const BdtProject *project, const BdtTarget *target, char *out, size_t out_size) {
     char dir[1024];
@@ -47,16 +52,26 @@ static void sanitize_name(const char *text, char *out, size_t out_size) {
     out[oi] = 0;
 }
 
-static int manifest_path(const BdtProject *project, const BdtTarget *target, const char *obj, const char *suffix,
-                         char *out, size_t out_size) {
+static int manifest_path_ex(const BdtProject *project, const BdtTarget *target, const char *obj, const char *suffix,
+                            char *out, size_t out_size, int create_dirs) {
     char dir[1024], cache_dir[1024], clean[1024], file[1200], target_dir[1024];
     bdt_path_join(dir, sizeof(dir), project->root, project->build_dir);
     bdt_path_join(cache_dir, sizeof(cache_dir), dir, "cache");
     bdt_path_join(target_dir, sizeof(target_dir), cache_dir, target->name);
-    bdt_mkdirs(target_dir);
+    if (create_dirs) bdt_mkdirs(target_dir);
     sanitize_name(obj, clean, sizeof(clean));
     snprintf(file, sizeof(file), "%s.%s", clean, suffix);
     return bdt_path_join(out, out_size, target_dir, file);
+}
+
+static int manifest_path(const BdtProject *project, const BdtTarget *target, const char *obj, const char *suffix,
+                         char *out, size_t out_size) {
+    return manifest_path_ex(project, target, obj, suffix, out, out_size, 1);
+}
+
+static int manifest_path_readonly(const BdtProject *project, const BdtTarget *target, const char *obj, const char *suffix,
+                                  char *out, size_t out_size) {
+    return manifest_path_ex(project, target, obj, suffix, out, out_size, 0);
 }
 
 static int read_manifest_u64(const char *path, const char *key, uint64_t *out) {
@@ -79,6 +94,20 @@ static int read_manifest_u64(const char *path, const char *key, uint64_t *out) {
 
 static void set_reason(char *reason, size_t reason_size, const char *text) {
     if (reason && reason_size) snprintf(reason, reason_size, "%s", text);
+}
+
+static int file_newer_than(const char *a, const char *b) {
+#ifdef _WIN32
+    WIN32_FILE_ATTRIBUTE_DATA da, db;
+    if (!GetFileAttributesExA(a, GetFileExInfoStandard, &da)) return 0;
+    if (!GetFileAttributesExA(b, GetFileExInfoStandard, &db)) return 1;
+    return CompareFileTime(&da.ftLastWriteTime, &db.ftLastWriteTime) > 0;
+#else
+    struct stat sa, sb;
+    if (stat(a, &sa) != 0) return 0;
+    if (stat(b, &sb) != 0) return 1;
+    return sa.st_mtime > sb.st_mtime;
+#endif
 }
 
 static uint64_t compile_signature(const char *src, const char *dep, const char *tool, const char *flags,
@@ -107,7 +136,7 @@ int bdt_compile_cache_fresh(const BdtProject *project, const BdtTarget *target, 
         return 0;
     }
     char path[1024];
-    if (manifest_path(project, target, obj, "compile", path, sizeof(path)) != 0 || !bdt_file_exists(path)) {
+    if (manifest_path_readonly(project, target, obj, "compile", path, sizeof(path)) != 0 || !bdt_file_exists(path)) {
         set_reason(reason, reason_size, "manifest missing");
         return 0;
     }
@@ -125,6 +154,42 @@ int bdt_compile_cache_fresh(const BdtProject *project, const BdtTarget *target, 
         else if (old_tool && old_tool != tool_hash) set_reason(reason, reason_size, "tool version changed");
         else if (old_flags && old_flags != flags_hash) set_reason(reason, reason_size, "flags changed");
         else set_reason(reason, reason_size, "cache signature changed");
+        return 0;
+    }
+    set_reason(reason, reason_size, "fresh");
+    return 1;
+}
+
+int bdt_compile_cache_quick_fresh(const BdtProject *project, const BdtTarget *target, const char *src, const char *obj,
+                                  const char *dep, const char *tool, const char *flags, char *reason, size_t reason_size) {
+    if (!bdt_file_exists(obj)) {
+        set_reason(reason, reason_size, "object missing");
+        return 0;
+    }
+    if (!bdt_file_exists(dep)) {
+        set_reason(reason, reason_size, "dependency file missing");
+        return 0;
+    }
+    char path[1024];
+    if (manifest_path(project, target, obj, "compile", path, sizeof(path)) != 0 || !bdt_file_exists(path)) {
+        set_reason(reason, reason_size, "manifest missing");
+        return 0;
+    }
+    uint64_t old_tool = 0, old_flags = 0;
+    uint64_t tool_hash = bdt_hash_tool_version(tool);
+    uint64_t flags_hash = bdt_hash_text(flags);
+    read_manifest_u64(path, "tool_hash", &old_tool);
+    read_manifest_u64(path, "flags_hash", &old_flags);
+    if (old_tool != tool_hash) {
+        set_reason(reason, reason_size, "tool version changed");
+        return 0;
+    }
+    if (old_flags != flags_hash) {
+        set_reason(reason, reason_size, "flags changed");
+        return 0;
+    }
+    if (file_newer_than(src, obj)) {
+        set_reason(reason, reason_size, "source changed");
         return 0;
     }
     set_reason(reason, reason_size, "fresh");
@@ -187,7 +252,7 @@ int bdt_link_cache_fresh(const BdtProject *project, const BdtTarget *target, con
         return 0;
     }
     char path[1024];
-    if (manifest_path(project, target, out, "link", path, sizeof(path)) != 0 || !bdt_file_exists(path)) {
+    if (manifest_path_readonly(project, target, out, "link", path, sizeof(path)) != 0 || !bdt_file_exists(path)) {
         set_reason(reason, reason_size, "manifest missing");
         return 0;
     }
@@ -196,6 +261,33 @@ int bdt_link_cache_fresh(const BdtProject *project, const BdtTarget *target, con
     uint64_t old = 0;
     if (!read_manifest_u64(path, "signature", &old) || old != sig) {
         set_reason(reason, reason_size, "objects, linker script, flags, or tool changed");
+        return 0;
+    }
+    set_reason(reason, reason_size, "fresh");
+    return 1;
+}
+
+int bdt_link_cache_quick_fresh(const BdtProject *project, const BdtTarget *target, const char *out, const char *objects,
+                               const char *tool, const char *flags, const char *script, char *reason, size_t reason_size) {
+    (void)objects;
+    if (!bdt_file_exists(out)) {
+        set_reason(reason, reason_size, "output missing");
+        return 0;
+    }
+    char path[1024];
+    if (manifest_path(project, target, out, "link", path, sizeof(path)) != 0 || !bdt_file_exists(path)) {
+        set_reason(reason, reason_size, "manifest missing");
+        return 0;
+    }
+    uint64_t old_tool = 0, old_flags = 0, old_script = 0;
+    uint64_t tool_hash = bdt_hash_tool_version(tool);
+    uint64_t flags_hash = bdt_hash_text(flags);
+    uint64_t script_hash = script && script[0] ? bdt_hash_file(script) : 0;
+    read_manifest_u64(path, "tool_hash", &old_tool);
+    read_manifest_u64(path, "flags_hash", &old_flags);
+    read_manifest_u64(path, "script_hash", &old_script);
+    if (old_tool != tool_hash || old_flags != flags_hash || old_script != script_hash) {
+        set_reason(reason, reason_size, "linker script, flags, or tool changed");
         return 0;
     }
     set_reason(reason, reason_size, "fresh");

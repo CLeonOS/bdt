@@ -88,20 +88,33 @@ uint64_t bdt_hash_depfile(const BdtProject *project, const char *depfile) {
 }
 
 uint64_t bdt_hash_tool_version(const char *tool) {
+    static BdtPair cache[32];
+    static size_t cache_count = 0;
+    const char *tool_name = tool && *tool ? tool : "cc";
+    for (size_t i = 0; i < cache_count; ++i) {
+        if (!strcmp(cache[i].key, tool_name)) {
+            return (uint64_t)strtoull(cache[i].value, NULL, 10);
+        }
+    }
     char cmd[512];
 #ifdef _WIN32
     char tmp[L_tmpnam];
     if (!tmpnam(tmp)) return bdt_hash_text(tool);
-    snprintf(cmd, sizeof(cmd), "%s --version > \"%s\" 2>NUL", tool && *tool ? tool : "cc", tmp);
+    snprintf(cmd, sizeof(cmd), "%s --version > \"%s\" 2>NUL", tool_name, tmp);
 #else
     char tmp[] = "/tmp/bdt-tool-version-XXXXXX";
     int fd = mkstemp(tmp);
     if (fd < 0) return bdt_hash_text(tool);
     close(fd);
-    snprintf(cmd, sizeof(cmd), "%s --version > \"%s\" 2>/dev/null", tool && *tool ? tool : "cc", tmp);
+    snprintf(cmd, sizeof(cmd), "%s --version > \"%s\" 2>/dev/null", tool_name, tmp);
 #endif
     int rc = system(cmd);
     uint64_t h = rc == 0 ? bdt_hash_file(tmp) : bdt_hash_text(tool);
     remove(tmp);
+    if (cache_count < 32) {
+        snprintf(cache[cache_count].key, sizeof(cache[cache_count].key), "%s", tool_name);
+        snprintf(cache[cache_count].value, sizeof(cache[cache_count].value), "%llu", (unsigned long long)h);
+        cache_count++;
+    }
     return h;
 }

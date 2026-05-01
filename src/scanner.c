@@ -15,6 +15,12 @@ static void scan_dir(BdtProject *project, const char *dir) {
         bdt_log(BDT_LOG_DEBUG, "found %s", build_file);
     }
 
+    if (strcmp(dir, project->root)) {
+        char git_marker[1024];
+        bdt_path_join(git_marker, sizeof(git_marker), dir, ".git");
+        if (bdt_file_exists(git_marker) || bdt_dir_exists(git_marker)) return;
+    }
+
 #ifdef _WIN32
     char pattern[1024];
     bdt_path_join(pattern, sizeof(pattern), dir, "*");
@@ -22,7 +28,8 @@ static void scan_dir(BdtProject *project, const char *dir) {
     HANDLE h = FindFirstFileA(pattern, &fd);
     if (h == INVALID_HANDLE_VALUE) return;
     do {
-        if (!strcmp(fd.cFileName, ".") || !strcmp(fd.cFileName, "..") || !strcmp(fd.cFileName, ".git") || !strcmp(fd.cFileName, "build")) continue;
+        if (!strcmp(fd.cFileName, ".") || !strcmp(fd.cFileName, "..") || !strcmp(fd.cFileName, ".git") ||
+            !strcmp(fd.cFileName, "build") || !strcmp(fd.cFileName, ".bdt")) continue;
         if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
             char next[1024];
             bdt_path_join(next, sizeof(next), dir, fd.cFileName);
@@ -35,7 +42,8 @@ static void scan_dir(BdtProject *project, const char *dir) {
     if (!d) return;
     struct dirent *e;
     while ((e = readdir(d))) {
-        if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, "..") || !strcmp(e->d_name, ".git") || !strcmp(e->d_name, "build")) continue;
+        if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, "..") || !strcmp(e->d_name, ".git") ||
+            !strcmp(e->d_name, "build") || !strcmp(e->d_name, ".bdt")) continue;
         char next[1024];
         bdt_path_join(next, sizeof(next), dir, e->d_name);
         if (bdt_dir_exists(next)) scan_dir(project, next);

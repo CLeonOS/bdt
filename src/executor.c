@@ -3,11 +3,17 @@
 #include <stdlib.h>
 #include <string.h>
 
+static long elapsed_ms(clock_t start) {
+    return (long)(((clock() - start) * 1000) / CLOCKS_PER_SEC);
+}
+
 static int run_shell(BdtProject *project, const char *raw) {
     char cmd[BDT_MAX_TEXT * 8];
     bdt_expand_vars(project, raw, cmd, sizeof(cmd));
     bdt_log(BDT_LOG_DEBUG, "%s", cmd);
+    clock_t start = clock();
     int rc = system(cmd);
+    bdt_trace_event("command", "", cmd, rc, elapsed_ms(start));
     return rc == 0 ? 0 : rc;
 }
 
@@ -153,8 +159,10 @@ static int run_compile(BdtProject *project, BdtTarget *target) {
         snprintf(dep, sizeof(dep), "%s.d", obj);
         if (target->cache && bdt_compile_cache_fresh(project, target, src, obj, dep, tool, flags, reason, sizeof(reason))) {
             bdt_log(BDT_LOG_DEBUG, "skip %s: %s", srcs[i], reason);
+            bdt_trace_event("compile-cache-hit", target->name, srcs[i], 0, 0);
             continue;
         }
+        bdt_trace_event("compile-cache-miss", target->name, srcs[i], 0, 0);
         needs_build[i] = 1;
         build_count++;
     }
@@ -201,7 +209,9 @@ static int run_compile(BdtProject *project, BdtTarget *target) {
         snprintf(dep, sizeof(dep), "%s.d", obj);
         bdt_log_progress((size_t)++built, (size_t)build_count, srcs[i]);
         snprintf(cmd, sizeof(cmd), "%s %s -MMD -MP -MF \"%s\" -c \"%s\" -o \"%s\"", tool, flags, dep, src, obj);
+        clock_t start = clock();
         if (run_shell(project, cmd) != 0) return -1;
+        bdt_trace_event("compile", target->name, srcs[i], 0, elapsed_ms(start));
         if (target->cache) bdt_compile_cache_store(project, target, src, obj, dep, tool, flags);
     }
     return 0;
@@ -245,14 +255,18 @@ static int run_link(BdtProject *project, BdtTarget *target) {
     bdt_expand_vars(project, target->tool[0] ? target->tool : "{LD}", tool, sizeof(tool));
     if (target->cache && bdt_link_cache_fresh(project, target, out, objs, tool, flags, script, reason, sizeof(reason))) {
         bdt_log(BDT_LOG_INFO, "%s: %s", bdt_msg(project->lang, "cache_hit"), target->name);
+        bdt_trace_event("link-cache-hit", target->name, out, 0, 0);
         return 0;
     }
+    bdt_trace_event("link-cache-miss", target->name, out, 0, 0);
     if (script[0]) {
         snprintf(cmd, sizeof(cmd), "%s %s -T \"%s\" -o \"%s\" %s", tool, flags, script, out, objs);
     } else {
         snprintf(cmd, sizeof(cmd), "%s %s -o \"%s\" %s", tool, flags, out, objs);
     }
+    clock_t start = clock();
     int rc = run_shell(project, cmd);
+    bdt_trace_event("link", target->name, out, rc, elapsed_ms(start));
     if (rc == 0 && target->cache) bdt_link_cache_store(project, target, out, objs, tool, flags, script);
     return rc;
 }
@@ -310,7 +324,9 @@ int bdt_run_command_target(BdtProject *project, BdtTarget *target, int no_cache)
     int fine_cache = !strcmp(type, "compile") || !strcmp(type, "link") || !strcmp(type, "c-apps");
     if (!fine_cache && target_cache_check(project, target, no_cache, &h)) return 0;
     bdt_log(BDT_LOG_STEP, "%s: %s (%s)", bdt_msg(project->lang, "target"), target->name, type);
+    bdt_trace_event("target-start", target->name, type, 0, 0);
 
+    clock_t start = clock();
     int rc = 0;
     if (!strcmp(type, "command")) rc = run_command(project, target);
     else if (!strcmp(type, "group")) rc = run_group(project, target);
@@ -330,9 +346,11 @@ int bdt_run_command_target(BdtProject *project, BdtTarget *target, int no_cache)
     }
 
     if (rc != 0) {
+        bdt_trace_event("target-fail", target->name, type, rc, elapsed_ms(start));
         bdt_log(BDT_LOG_ERROR, "target '%s' failed: %d", target->name, rc);
         return rc;
     }
     if (!fine_cache && target->cache) bdt_cache_store(project, target, h);
+    bdt_trace_event("target-done", target->name, type, 0, elapsed_ms(start));
     return 0;
 }
