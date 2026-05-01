@@ -38,6 +38,33 @@ int main(int argc, char **argv) {
         free(project);
         return 0;
     }
+    if (cli.view) {
+        int rc = bdt_view_project(project);
+        free(project);
+        return rc == 0 ? 0 : 1;
+    }
+    if (cli.explain) {
+        const char *name = cli.explain_target ? cli.explain_target : (cli.target ? cli.target : project->default_target);
+        int rc = bdt_explain_target(project, name);
+        free(project);
+        return rc == 0 ? 0 : 1;
+    }
+    if (cli.clean_target) {
+        const char *name = cli.clean_name ? cli.clean_name : (cli.target ? cli.target : project->default_target);
+        int rc = bdt_clean_named_target(project, name);
+        free(project);
+        return rc == 0 ? 0 : 1;
+    }
+    if (cli.doctor) {
+        int rc = bdt_doctor(project);
+        free(project);
+        return rc == 0 ? 0 : 1;
+    }
+    if (cli.cache_cmd) {
+        int rc = bdt_cache_command(project, cli.cache_action, cli.cache_arg);
+        free(project);
+        return rc == 0 ? 0 : 1;
+    }
 
     const char *target = cli.target ? cli.target : project->default_target;
     int rc = bdt_run_target(project, target, cli.no_cache) == 0 ? 0 : 1;

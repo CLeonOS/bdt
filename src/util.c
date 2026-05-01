@@ -49,6 +49,7 @@ int bdt_abs_path(char *out, size_t out_size, const char *path) {
     DWORD n = GetFullPathNameA(path, (DWORD)out_size, out, NULL);
     return n > 0 && n < out_size ? 0 : -1;
 #else
+    (void)out_size;
     char *r = realpath(path, out);
     return r ? 0 : -1;
 #endif
@@ -120,6 +121,17 @@ int bdt_command_exists(const char *cmd) {
     return system(probe) == 0;
 }
 
+int bdt_remove_path(const char *path) {
+    if (!path || !*path) return 0;
+    char cmd[BDT_MAX_TEXT];
+#ifdef _WIN32
+    snprintf(cmd, sizeof(cmd), "cmd /C if exist \"%s\" (if exist \"%s\\*\" rmdir /S /Q \"%s\" else del /F /Q \"%s\")", path, path, path, path);
+#else
+    snprintf(cmd, sizeof(cmd), "rm -rf \"%s\"", path);
+#endif
+    return system(cmd) == 0 ? 0 : -1;
+}
+
 int bdt_parse_cli(int argc, char **argv, BdtCli *cli) {
     memset(cli, 0, sizeof(*cli));
     cli->argc = argc;
@@ -135,10 +147,36 @@ int bdt_parse_cli(int argc, char **argv, BdtCli *cli) {
         else if (!strcmp(a, "--list")) cli->list = 1;
         else if (!strcmp(a, "--scan")) cli->scan = 1;
         else if (!strcmp(a, "--graph")) cli->graph = 1;
+        else if (!strcmp(a, "view") || !strcmp(a, "--view")) cli->view = 1;
+        else if (!strcmp(a, "explain")) {
+            cli->explain = 1;
+            if (i + 1 < argc && argv[i + 1][0] != '-') cli->explain_target = argv[++i];
+        }
+        else if (!strcmp(a, "clean")) {
+            if (i + 1 < argc && argv[i + 1][0] != '-') {
+                cli->clean_target = 1;
+                cli->clean_name = argv[++i];
+            } else {
+                cli->target = a;
+            }
+        }
+        else if (!strcmp(a, "doctor")) cli->doctor = 1;
+        else if (!strcmp(a, "cache")) {
+            cli->cache_cmd = 1;
+            if (i + 1 < argc) cli->cache_action = argv[++i];
+            if (i + 1 < argc && argv[i + 1][0] != '-') cli->cache_arg = argv[++i];
+        }
         else if (!strcmp(a, "--no-cache")) cli->no_cache = 1;
         else if (!strcmp(a, "-v") || !strcmp(a, "--verbose")) cli->verbose = 1;
         else if (!strcmp(a, "-h") || !strcmp(a, "--help")) {
             printf("bdt [target] [--project file] [-j N] [--list] [--scan] [--graph] [--no-cache]\n");
+            printf("bdt view\n");
+            printf("bdt explain <target>\n");
+            printf("bdt clean <target>\n");
+            printf("bdt doctor\n");
+            printf("bdt cache export [archive]\n");
+            printf("bdt cache import [archive]\n");
+            printf("bdt cache pull|push\n");
             exit(0);
         } else if (a[0] != '-') {
             cli->target = a;

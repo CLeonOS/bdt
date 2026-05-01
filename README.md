@@ -12,9 +12,12 @@ dependencies, runs toolchain commands, and emits structured build logs.
 - Command, group, compile, link, archive-style application, tar, truncate, and
   cleanup targets.
 - Configurable GCC/G++/LD/Rust toolchain variables.
-- Incremental-cache primitives based on hashing.
+- File-level incremental compilation based on source, header dependency,
+  flags, and toolchain-version hashes.
 - ANSI-colored logs and compile progress output.
 - Chinese and English message support.
+- ncurses project structure viewer with targets, dependencies, plugins, cache,
+  build files, and subprojects.
 - C application builder support for CLeonOS user programs.
 
 ## Build
@@ -79,6 +82,35 @@ build/bdt/bdt app -j 4
 
 bdt reads `project.bdt` from the project root by default. The file uses an INI
 style format.
+
+Optional shared cache settings:
+
+```ini
+[cache]
+path = {root}/{build_dir}/cache
+archive = {root}/{build_dir}/bdt-cache.tar
+pull_command = aws s3 cp s3://bucket/project-cache.tar {root}/{build_dir}/bdt-cache.tar && bdt cache import
+push_command = bdt cache export && aws s3 cp {root}/{build_dir}/bdt-cache.tar s3://bucket/project-cache.tar
+```
+
+Optional plugin runners:
+
+```ini
+[plugin.pack-image]
+runner = python3
+path = {root}/tools/pack_image.py
+
+[target.image]
+type = plugin
+plugin = pack-image
+inputs = {root}/build/rootfs
+output = {root}/build/image.bin
+flags = --format raw
+```
+
+Plugin runners receive `BDT_PROJECT_ROOT`, `BDT_PROJECT_NAME`, `BDT_TARGET`,
+`BDT_PLUGIN`, `BDT_INPUTS`, `BDT_OUTPUTS`, `BDT_SOURCES`, `BDT_OUTPUT`, and
+`BDT_FLAGS` in their environment.
 
 ### Project Section
 
@@ -158,7 +190,9 @@ cache = false
 
 ### compile
 
-Compiles source files to object files and shows progress.
+Compiles source files to object files and shows progress. bdt writes GCC-style
+`.d` dependency files and skips unchanged source files when the source hash,
+header dependency hash, flags, and compiler version are unchanged.
 
 ```ini
 [target.objects]
@@ -172,7 +206,8 @@ cflags = {CFLAGS}
 ### link
 
 Links object files. If `inputs` points to a directory, bdt collects `.o` files
-recursively.
+recursively. bdt skips the link step when the object list, object contents,
+linker script, linker flags, and linker version are unchanged.
 
 ```ini
 [target.app]
@@ -234,26 +269,35 @@ cache = false
 
 ### c-apps
 
-Builds CLeonOS-style user applications from `*_main.c` and `*_kmain.c` files.
-This target type is useful for CLeonOS and can also serve as a template for
-project-specific application builders.
+Builds a directory of C applications from configurable entry-file suffixes.
+This target type is generic: entry naming, runtime sources, output groups, and
+per-application options are all controlled by `project.bdt`.
 
 ```ini
 [target.userapps]
 type = c-apps
 tool = {CC}
-main_dir = {root}/cleonos/c/apps
-common_dirs = {root}/cleonos/c/src
-runtime_sources = {root}/cleonos/c/apps/cmd_runtime.c
-objects = {root}/build/x86_64/user/obj
-output = {root}/build/x86_64/user/apps
-system_output = {root}/build/x86_64/user/system
-linker_script = {root}/cleonos/c/user.ld
-system_linker_script = {root}/cleonos/c/kelf.ld
-cflags = {USER_CFLAGS}
-ldflags = {USER_LDFLAGS}
-app.browser.cflags = {USER_TLS_CFLAGS},{USER_GUMBO_CFLAGS}
-app.browser.sources = {USER_TLS_SOURCES}
+main_dir = {root}/apps
+common_dirs = {root}/lib
+runtime_sources = {root}/runtime/app_runtime.c
+entry_suffix = _main.c
+secondary_entry_suffix = _service.c
+secondary_output_group = services
+runtime_exclude_apps = shell
+objects = {root}/build/app-obj
+output = {root}/build/apps
+output_group.default.output = {root}/build/apps
+output_group.services.output = {root}/build/services
+output_group.tools.output = {root}/build/tools
+output_group.tools.apps = editor, viewer
+linker_script = {root}/link/app.ld
+output_group.services.linker_script = {root}/link/service.ld
+cflags = {APP_CFLAGS}
+ldflags = {APP_LDFLAGS}
+app.browser.cflags = {TLS_CFLAGS},{HTML_CFLAGS}
+app.browser.sources = {TLS_SOURCES}
+app.viewer.output_group = tools
+app.shell.include_runtime = false
 ```
 
 Per-application fields:
@@ -262,6 +306,25 @@ Per-application fields:
 - `app.NAME.sources`: extra source files for one app.
 - `app.NAME.source_dirs`: extra recursive source directories.
 - `app.NAME.exclude_sources`: source basenames or relative paths to skip.
+- `app.NAME.output_group`: output group for one app.
+- `app.NAME.include_runtime`: whether to link shared runtime sources.
+
+### plugin
+
+Runs an external plugin target. A plugin can be a script, binary, or command
+configured under `[plugin.NAME]`; bdt expands target fields and passes them as
+environment variables.
+
+```ini
+[plugin.assets]
+command = python3 {root}/tools/assets.py --in "$BDT_INPUTS" --out "$BDT_OUTPUT"
+
+[target.assets]
+type = plugin
+plugin = assets
+inputs = {root}/assets
+output = {root}/build/assets.bin
+```
 
 ## Common Commands
 
@@ -271,7 +334,15 @@ From a project root with `project.bdt`:
 build/bdt/bdt --list
 build/bdt/bdt --scan
 build/bdt/bdt --graph
+build/bdt/bdt view
 build/bdt/bdt iso -j 4
+build/bdt/bdt explain iso
+build/bdt/bdt clean kernel-objects
+build/bdt/bdt doctor
+build/bdt/bdt cache export
+build/bdt/bdt cache import
+build/bdt/bdt cache pull
+build/bdt/bdt cache push
 ```
 
 Useful flags:
@@ -279,10 +350,20 @@ Useful flags:
 - `--list`: list known targets.
 - `--scan`: list discovered build descriptor files.
 - `--graph`: print target dependencies.
+- `view`: open an ncurses project structure viewer. It loads ncurses at runtime,
+  so normal builds still work without ncurses; install `libncurses` if this
+  command reports that ncurses is unavailable.
 - `--verbose`: print shell commands before running them.
 - `-j N`: set job count. Current target types may still run serially unless
   they implement parallel execution.
 - `--no-cache`: ignore cache checks.
+- `explain <target>`: print target configuration and cache reasons.
+- `clean <target>`: remove one target's known outputs and bdt cache metadata.
+- `doctor`: check common tools, subprojects, output directory access, and
+  target configuration problems.
+- `cache export [archive]`: archive the local bdt cache.
+- `cache import [archive]`: restore the local bdt cache from an archive.
+- `cache pull` / `cache push`: run configured shared-cache hooks.
 
 ## CLeonOS Usage
 

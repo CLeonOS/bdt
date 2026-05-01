@@ -33,7 +33,16 @@ typedef struct {
     char source_dirs[BDT_MAX_TEXT];
     char exclude_sources[BDT_MAX_TEXT];
     char cflags[BDT_MAX_TEXT];
+    char output_group[96];
+    int include_runtime;
 } BdtAppRule;
+
+typedef struct {
+    char name[96];
+    char output[1024];
+    char linker_script[1024];
+    char apps[BDT_MAX_TEXT];
+} BdtOutputGroup;
 
 typedef struct {
     char name[96];
@@ -45,6 +54,20 @@ typedef struct {
     BdtSection sections[BDT_MAX_ITEMS];
     size_t section_count;
 } BdtConfig;
+
+typedef struct {
+    char name[96];
+    char runner[128];
+    char path[1024];
+    char command[BDT_MAX_TEXT];
+} BdtPlugin;
+
+typedef struct {
+    char path[1024];
+    char archive[1024];
+    char pull_command[BDT_MAX_TEXT];
+    char push_command[BDT_MAX_TEXT];
+} BdtCacheConfig;
 
 typedef struct {
     char name[96];
@@ -66,14 +89,17 @@ typedef struct {
     char includes[BDT_MAX_TEXT];
     char linker_script[1024];
     char tool[128];
+    char plugin[128];
     char common_dirs[BDT_MAX_TEXT];
     char main_dir[1024];
     char runtime_sources[BDT_MAX_TEXT];
-    char system_output[1024];
-    char system_linker_script[1024];
-    char uwm_output[1024];
-    char uwm_apps[BDT_MAX_TEXT];
+    char entry_suffix[64];
+    char secondary_entry_suffix[64];
+    char secondary_output_group[96];
+    char runtime_exclude_apps[BDT_MAX_TEXT];
     char skip_apps[BDT_MAX_TEXT];
+    BdtOutputGroup output_groups[BDT_MAX_ITEMS];
+    size_t output_group_count;
     BdtAppRule app_rules[BDT_MAX_ITEMS];
     size_t app_rule_count;
     int always;
@@ -90,9 +116,13 @@ typedef struct {
     char default_target[96];
     char build_dir[1024];
     char language[32];
+    char doctor_tools[BDT_MAX_TEXT];
+    BdtCacheConfig cache_config;
     BdtLanguage lang;
     BdtPair vars[BDT_MAX_ITEMS];
     size_t var_count;
+    BdtPlugin plugins[BDT_MAX_ITEMS];
+    size_t plugin_count;
     BdtTarget targets[BDT_MAX_ITEMS];
     size_t target_count;
     char subprojects[BDT_MAX_ITEMS][512];
@@ -110,8 +140,17 @@ typedef struct {
     int list;
     int scan;
     int graph;
+    int view;
+    int explain;
+    int clean_target;
+    int doctor;
+    int cache_cmd;
     int no_cache;
     int verbose;
+    const char *explain_target;
+    const char *clean_name;
+    const char *cache_action;
+    const char *cache_arg;
 } BdtCli;
 
 void bdt_log_init(BdtLanguage lang, int verbose);
@@ -128,17 +167,35 @@ int bdt_scan_build_files(BdtProject *project);
 void bdt_print_scan(const BdtProject *project);
 void bdt_print_targets(const BdtProject *project);
 void bdt_print_graph(const BdtProject *project);
+int bdt_view_project(const BdtProject *project);
 
 BdtTarget *bdt_find_target(BdtProject *project, const char *name);
 int bdt_run_target(BdtProject *project, const char *name, int no_cache);
 int bdt_run_command_target(BdtProject *project, BdtTarget *target, int no_cache);
 int bdt_run_c_apps_target(BdtProject *project, BdtTarget *target);
+int bdt_run_plugin_target(BdtProject *project, BdtTarget *target);
+BdtPlugin *bdt_find_plugin(BdtProject *project, const char *name);
 
 uint64_t bdt_hash_file(const char *path);
 uint64_t bdt_hash_text(const char *text);
 uint64_t bdt_hash_target_inputs(const BdtProject *project, const BdtTarget *target);
 int bdt_cache_is_fresh(const BdtProject *project, const BdtTarget *target, uint64_t hash);
 int bdt_cache_store(const BdtProject *project, const BdtTarget *target, uint64_t hash);
+int bdt_compile_cache_fresh(const BdtProject *project, const BdtTarget *target, const char *src, const char *obj,
+                            const char *dep, const char *tool, const char *flags, char *reason, size_t reason_size);
+int bdt_compile_cache_store(const BdtProject *project, const BdtTarget *target, const char *src, const char *obj,
+                            const char *dep, const char *tool, const char *flags);
+int bdt_link_cache_fresh(const BdtProject *project, const BdtTarget *target, const char *out, const char *objects,
+                         const char *tool, const char *flags, const char *script, char *reason, size_t reason_size);
+int bdt_link_cache_store(const BdtProject *project, const BdtTarget *target, const char *out, const char *objects,
+                         const char *tool, const char *flags, const char *script);
+uint64_t bdt_hash_depfile(const BdtProject *project, const char *depfile);
+uint64_t bdt_hash_tool_version(const char *tool);
+int bdt_remove_path(const char *path);
+int bdt_explain_target(BdtProject *project, const char *name);
+int bdt_clean_named_target(BdtProject *project, const char *name);
+int bdt_doctor(BdtProject *project);
+int bdt_cache_command(BdtProject *project, const char *action, const char *arg);
 
 int bdt_mkdirs(const char *path);
 int bdt_file_exists(const char *path);

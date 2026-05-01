@@ -1,5 +1,6 @@
 CC ?= cc
 CFLAGS ?= -std=c11 -O2 -Wall -Wextra
+LDLIBS ?=
 BUILD_DIR ?= build
 
 SRC := $(wildcard src/*.c)
@@ -8,6 +9,8 @@ EXE := $(BUILD_DIR)/bdt
 
 ifeq ($(OS),Windows_NT)
 EXE := $(BUILD_DIR)/bdt.exe
+else
+LDLIBS += -ldl
 endif
 
 .PHONY: all clean
@@ -15,7 +18,7 @@ endif
 all: $(EXE)
 
 $(EXE): $(OBJ)
-	$(CC) $(OBJ) -o $@
+	$(CC) $(OBJ) -o $@ $(LDLIBS)
 
 $(BUILD_DIR)/%.o: src/%.c src/bdt.h
 	@mkdir -p $(BUILD_DIR)

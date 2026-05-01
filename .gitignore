@@ -1,0 +1,6 @@
+build/
+.bdt/
+*.o
+*.o.d
+*.d
+*.exe

@@ -52,14 +52,9 @@ static int run_remove(BdtProject *project, BdtTarget *target) {
     char paths[BDT_MAX_ITEMS][512];
     int count = bdt_split_list(target->inputs[0] ? target->inputs : target->output, paths, BDT_MAX_ITEMS);
     for (int i = 0; i < count; ++i) {
-        char path[1024], cmd[BDT_MAX_TEXT];
+        char path[1024];
         bdt_expand_vars(project, paths[i], path, sizeof(path));
-#ifdef _WIN32
-        snprintf(cmd, sizeof(cmd), "cmd /C if exist \"%s\" (if exist \"%s\\*\" rmdir /S /Q \"%s\" else del /F /Q \"%s\")", path, path, path, path);
-#else
-        snprintf(cmd, sizeof(cmd), "rm -rf \"%s\"", path);
-#endif
-        if (run_shell(project, cmd) != 0) return -1;
+        if (bdt_remove_path(path) != 0) return -1;
     }
     return 0;
 }
@@ -102,7 +97,7 @@ static int run_tar(BdtProject *project, BdtTarget *target) {
 }
 
 static int run_truncate(BdtProject *project, BdtTarget *target) {
-    char out[1024], cmd[BDT_MAX_TEXT];
+    char out[1024], cmd[BDT_MAX_TEXT * 2];
     bdt_expand_vars(project, target->output, out, sizeof(out));
     if (bdt_file_exists(out)) return 0;
 #ifdef _WIN32
@@ -119,8 +114,11 @@ static int run_compile(BdtProject *project, BdtTarget *target) {
     char out_dir[1024];
     bdt_expand_vars(project, target->output, out_dir, sizeof(out_dir));
     bdt_mkdirs(out_dir);
+    int needs_build[BDT_MAX_ITEMS];
+    int build_count = 0;
+    memset(needs_build, 0, sizeof(needs_build));
     for (int i = 0; i < count; ++i) {
-        char src[1024], obj[1024], rel[512], flags[BDT_MAX_TEXT], cmd[BDT_MAX_TEXT * 2];
+        char src[1024], obj[1024], dep[1060], rel[1024], flags[BDT_MAX_TEXT], tool[256], reason[256];
         char expanded_src[1024];
         bdt_expand_vars(project, srcs[i], expanded_src, sizeof(expanded_src));
         if (strchr(expanded_src, ':') || expanded_src[0] == '/' || expanded_src[0] == '\\') {
@@ -128,7 +126,8 @@ static int run_compile(BdtProject *project, BdtTarget *target) {
         } else {
             bdt_path_join(src, sizeof(src), project->root, expanded_src);
         }
-        snprintf(rel, sizeof(rel), "%s", srcs[i]);
+        strncpy(rel, srcs[i], sizeof(rel) - 1);
+        rel[sizeof(rel) - 1] = 0;
         for (char *p = rel; *p; ++p) {
             if (*p == '\\') *p = '/';
         }
@@ -144,21 +143,76 @@ static int run_compile(BdtProject *project, BdtTarget *target) {
             *cut = 0;
             bdt_mkdirs(obj_dir);
         }
-        const char *tool = target->tool[0] ? target->tool : "{CC}";
+        bdt_expand_vars(project, target->tool[0] ? target->tool : "{CC}", tool, sizeof(tool));
         const char *ext = strrchr(src, '.');
         const char *base_flags = target->flags;
         if (ext && !strcmp(ext, ".cpp") && target->cxxflags[0]) base_flags = target->cxxflags;
         else if (ext && !strcmp(ext, ".S") && target->asflags[0]) base_flags = target->asflags;
         else if (target->cflags[0]) base_flags = target->cflags;
         bdt_expand_list_vars(project, base_flags, flags, sizeof(flags));
-        snprintf(cmd, sizeof(cmd), "%s %s -c \"%s\" -o \"%s\"", tool, flags, src, obj);
-        bdt_log_progress((size_t)i + 1, (size_t)count, srcs[i]);
+        snprintf(dep, sizeof(dep), "%s.d", obj);
+        if (target->cache && bdt_compile_cache_fresh(project, target, src, obj, dep, tool, flags, reason, sizeof(reason))) {
+            bdt_log(BDT_LOG_DEBUG, "skip %s: %s", srcs[i], reason);
+            continue;
+        }
+        needs_build[i] = 1;
+        build_count++;
+    }
+    if (build_count == 0) {
+        if (target->cache) bdt_log(BDT_LOG_INFO, "%s: %s", bdt_msg(project->lang, "cache_hit"), target->name);
+        return 0;
+    }
+
+    int built = 0;
+    for (int i = 0; i < count; ++i) {
+        if (!needs_build[i]) continue;
+        char src[1024], obj[1024], dep[1060], rel[1024], flags[BDT_MAX_TEXT], tool[256], cmd[BDT_MAX_TEXT * 2];
+        char expanded_src[1024];
+        bdt_expand_vars(project, srcs[i], expanded_src, sizeof(expanded_src));
+        if (strchr(expanded_src, ':') || expanded_src[0] == '/' || expanded_src[0] == '\\') {
+            snprintf(src, sizeof(src), "%s", expanded_src);
+        } else {
+            bdt_path_join(src, sizeof(src), project->root, expanded_src);
+        }
+        strncpy(rel, srcs[i], sizeof(rel) - 1);
+        rel[sizeof(rel) - 1] = 0;
+        for (char *p = rel; *p; ++p) {
+            if (*p == '\\') *p = '/';
+        }
+        char *dot = strrchr(rel, '.');
+        if (dot) strcpy(dot, ".o");
+        bdt_path_join(obj, sizeof(obj), out_dir, rel);
+        char obj_dir[1024];
+        snprintf(obj_dir, sizeof(obj_dir), "%s", obj);
+        char *cut = strrchr(obj_dir, '/');
+        char *cut2 = strrchr(obj_dir, '\\');
+        if (!cut || cut2 > cut) cut = cut2;
+        if (cut) {
+            *cut = 0;
+            bdt_mkdirs(obj_dir);
+        }
+        bdt_expand_vars(project, target->tool[0] ? target->tool : "{CC}", tool, sizeof(tool));
+        const char *ext = strrchr(src, '.');
+        const char *base_flags = target->flags;
+        if (ext && !strcmp(ext, ".cpp") && target->cxxflags[0]) base_flags = target->cxxflags;
+        else if (ext && !strcmp(ext, ".S") && target->asflags[0]) base_flags = target->asflags;
+        else if (target->cflags[0]) base_flags = target->cflags;
+        bdt_expand_list_vars(project, base_flags, flags, sizeof(flags));
+        snprintf(dep, sizeof(dep), "%s.d", obj);
+        bdt_log_progress((size_t)++built, (size_t)build_count, srcs[i]);
+        snprintf(cmd, sizeof(cmd), "%s %s -MMD -MP -MF \"%s\" -c \"%s\" -o \"%s\"", tool, flags, dep, src, obj);
         if (run_shell(project, cmd) != 0) return -1;
+        if (target->cache) bdt_compile_cache_store(project, target, src, obj, dep, tool, flags);
     }
     return 0;
 }
 
 static int collect_objects_from_dir(char *out, size_t out_size, const char *dir);
+
+static int is_object_file_name(const char *name) {
+    size_t n = name ? strlen(name) : 0;
+    return n >= 2 && !strcmp(name + n - 2, ".o");
+}
 
 static int run_rust_staticlib(BdtProject *project, BdtTarget *target) {
     char src[1024], out[1024], flags[BDT_MAX_TEXT], cmd[BDT_MAX_TEXT * 2];
@@ -187,13 +241,20 @@ static int run_link(BdtProject *project, BdtTarget *target) {
     bdt_expand_vars(project, target->output, out, sizeof(out));
     bdt_expand_list_vars(project, target->ldflags[0] ? target->ldflags : target->flags, flags, sizeof(flags));
     bdt_expand_vars(project, target->linker_script, script, sizeof(script));
-    const char *tool = target->tool[0] ? target->tool : "{LD}";
+    char tool[256], reason[256];
+    bdt_expand_vars(project, target->tool[0] ? target->tool : "{LD}", tool, sizeof(tool));
+    if (target->cache && bdt_link_cache_fresh(project, target, out, objs, tool, flags, script, reason, sizeof(reason))) {
+        bdt_log(BDT_LOG_INFO, "%s: %s", bdt_msg(project->lang, "cache_hit"), target->name);
+        return 0;
+    }
     if (script[0]) {
         snprintf(cmd, sizeof(cmd), "%s %s -T \"%s\" -o \"%s\" %s", tool, flags, script, out, objs);
     } else {
         snprintf(cmd, sizeof(cmd), "%s %s -o \"%s\" %s", tool, flags, out, objs);
     }
-    return run_shell(project, cmd);
+    int rc = run_shell(project, cmd);
+    if (rc == 0 && target->cache) bdt_link_cache_store(project, target, out, objs, tool, flags, script);
+    return rc;
 }
 
 #ifdef _WIN32
@@ -210,7 +271,7 @@ static int collect_objects_from_dir(char *out, size_t out_size, const char *dir)
         bdt_path_join(path, sizeof(path), dir, fd.cFileName);
         if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
             collect_objects_from_dir(out, out_size, path);
-        } else if (strstr(fd.cFileName, ".o")) {
+        } else if (is_object_file_name(fd.cFileName)) {
             strncat(out, " \"", out_size - strlen(out) - 1);
             strncat(out, path, out_size - strlen(out) - 1);
             strncat(out, "\"", out_size - strlen(out) - 1);
@@ -231,7 +292,7 @@ static int collect_objects_from_dir(char *out, size_t out_size, const char *dir)
         bdt_path_join(path, sizeof(path), dir, e->d_name);
         if (bdt_dir_exists(path)) {
             collect_objects_from_dir(out, out_size, path);
-        } else if (strstr(e->d_name, ".o")) {
+        } else if (is_object_file_name(e->d_name)) {
             strncat(out, " \"", out_size - strlen(out) - 1);
             strncat(out, path, out_size - strlen(out) - 1);
             strncat(out, "\"", out_size - strlen(out) - 1);
@@ -244,9 +305,10 @@ static int collect_objects_from_dir(char *out, size_t out_size, const char *dir)
 
 int bdt_run_command_target(BdtProject *project, BdtTarget *target, int no_cache) {
     uint64_t h = 0;
-    if (target_cache_check(project, target, no_cache, &h)) return 0;
 
     const char *type = target->type[0] ? target->type : "command";
+    int fine_cache = !strcmp(type, "compile") || !strcmp(type, "link") || !strcmp(type, "c-apps");
+    if (!fine_cache && target_cache_check(project, target, no_cache, &h)) return 0;
     bdt_log(BDT_LOG_STEP, "%s: %s (%s)", bdt_msg(project->lang, "target"), target->name, type);
 
     int rc = 0;
@@ -261,6 +323,7 @@ int bdt_run_command_target(BdtProject *project, BdtTarget *target, int no_cache)
     else if (!strcmp(type, "rust-staticlib")) rc = run_rust_staticlib(project, target);
     else if (!strcmp(type, "link")) rc = run_link(project, target);
     else if (!strcmp(type, "c-apps")) rc = bdt_run_c_apps_target(project, target);
+    else if (!strcmp(type, "plugin") || !strncmp(type, "plugin:", 7) || target->plugin[0]) rc = bdt_run_plugin_target(project, target);
     else {
         bdt_log(BDT_LOG_ERROR, "unknown target type '%s' for '%s'", type, target->name);
         return -1;
@@ -270,6 +333,6 @@ int bdt_run_command_target(BdtProject *project, BdtTarget *target, int no_cache)
         bdt_log(BDT_LOG_ERROR, "target '%s' failed: %d", target->name, rc);
         return rc;
     }
-    if (target->cache) bdt_cache_store(project, target, h);
+    if (!fine_cache && target->cache) bdt_cache_store(project, target, h);
     return 0;
 }

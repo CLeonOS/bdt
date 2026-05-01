@@ -4,7 +4,7 @@ type = executable
 languages = c
 
 [sources]
-files = src/main.c, src/cache.c, src/config.c, src/executor.c, src/graph.c, src/hash.c, src/lang.c, src/log.c, src/project.c, src/scanner.c, src/toolchain.c, src/util.c
+files = src/main.c, src/cache.c, src/config.c, src/diagnostics.c, src/executor.c, src/graph.c, src/hash.c, src/lang.c, src/log.c, src/plugin.c, src/project.c, src/scanner.c, src/shared_cache.c, src/toolchain.c, src/util.c, src/view.c
 headers = src/bdt.h
 
 [outputs]
