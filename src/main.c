@@ -7,6 +7,10 @@ int main(int argc, char **argv) {
     BdtCli cli;
     bdt_parse_cli(argc, argv, &cli);
 
+    if (cli.log_style_cmd) {
+        return bdt_log_style_command(cli.log_style_value) == 0 ? 0 : 1;
+    }
+
     char root[1024];
     if (bdt_abs_path(root, sizeof(root), ".") != 0) snprintf(root, sizeof(root), ".");
 

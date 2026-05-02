@@ -158,6 +158,7 @@ typedef struct {
     int clean_target;
     int doctor;
     int cache_cmd;
+    int log_style_cmd;
     int no_cache;
     int verbose;
     const char *explain_target;
@@ -169,11 +170,13 @@ typedef struct {
     const char *clean_name;
     const char *cache_action;
     const char *cache_arg;
+    const char *log_style_value;
 } BdtCli;
 
 void bdt_log_init(BdtLanguage lang, int verbose);
 void bdt_log(BdtLogLevel level, const char *fmt, ...);
 void bdt_log_progress(size_t current, size_t total, const char *label);
+int bdt_log_style_command(const char *style);
 const char *bdt_msg(BdtLanguage lang, const char *key);
 BdtLanguage bdt_lang_from_text(const char *s);
 

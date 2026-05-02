@@ -185,6 +185,10 @@ int bdt_parse_cli(int argc, char **argv, BdtCli *cli) {
             if (i + 1 < argc) cli->cache_action = argv[++i];
             if (i + 1 < argc && argv[i + 1][0] != '-') cli->cache_arg = argv[++i];
         }
+        else if (!strcmp(a, "log-style")) {
+            cli->log_style_cmd = 1;
+            if (i + 1 < argc && argv[i + 1][0] != '-') cli->log_style_value = argv[++i];
+        }
         else if (!strcmp(a, "--no-cache")) cli->no_cache = 1;
         else if (!strcmp(a, "--trace-out") && i + 1 < argc) cli->trace_path = argv[++i];
         else if (!strcmp(a, "-v") || !strcmp(a, "--verbose")) cli->verbose = 1;
@@ -201,6 +205,7 @@ int bdt_parse_cli(int argc, char **argv, BdtCli *cli) {
             printf("bdt cache export [archive]\n");
             printf("bdt cache import [archive]\n");
             printf("bdt cache pull|push\n");
+            printf("bdt log-style [default|kernel]\n");
             exit(0);
         } else if (a[0] != '-') {
             cli->target = a;
