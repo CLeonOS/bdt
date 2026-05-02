@@ -6,8 +6,26 @@
 #ifdef _WIN32
 #include <windows.h>
 #else
+#include <dirent.h>
 #include <sys/stat.h>
 #endif
+
+#define BDT_MAX_QUICK_MANIFESTS 8192
+
+typedef struct {
+    char target[96];
+    char file[1200];
+} BdtQuickManifest;
+
+static BdtQuickManifest g_quick_manifests[BDT_MAX_QUICK_MANIFESTS];
+static size_t g_quick_manifest_count = 0;
+static char g_quick_loaded_target[96] = "";
+
+static int quick_manifest_cmp(const void *a, const void *b) {
+    const BdtQuickManifest *ma = (const BdtQuickManifest *)a;
+    const BdtQuickManifest *mb = (const BdtQuickManifest *)b;
+    return strcmp(ma->file, mb->file);
+}
 
 static int cache_path(const BdtProject *project, const BdtTarget *target, char *out, size_t out_size) {
     char dir[1024];
@@ -54,7 +72,8 @@ static void sanitize_name(const char *text, char *out, size_t out_size) {
 
 static int manifest_path_ex(const BdtProject *project, const BdtTarget *target, const char *obj, const char *suffix,
                             char *out, size_t out_size, int create_dirs) {
-    char dir[1024], cache_dir[1024], clean[1024], file[1200], target_dir[1024];
+    char clean[1024], file[1200], target_dir[1024];
+    char dir[1024], cache_dir[1024];
     bdt_path_join(dir, sizeof(dir), project->root, project->build_dir);
     bdt_path_join(cache_dir, sizeof(cache_dir), dir, "cache");
     bdt_path_join(target_dir, sizeof(target_dir), cache_dir, target->name);
@@ -62,6 +81,21 @@ static int manifest_path_ex(const BdtProject *project, const BdtTarget *target, 
     sanitize_name(obj, clean, sizeof(clean));
     snprintf(file, sizeof(file), "%s.%s", clean, suffix);
     return bdt_path_join(out, out_size, target_dir, file);
+}
+
+static int target_cache_dir(const BdtProject *project, const BdtTarget *target, char *out, size_t out_size, int create_dirs) {
+    char dir[1024], cache_dir[1024];
+    bdt_path_join(dir, sizeof(dir), project->root, project->build_dir);
+    bdt_path_join(cache_dir, sizeof(cache_dir), dir, "cache");
+    bdt_path_join(out, out_size, cache_dir, target->name);
+    if (create_dirs) bdt_mkdirs(out);
+    return 0;
+}
+
+static void manifest_file_name(const char *obj, const char *suffix, char *out, size_t out_size) {
+    char clean[1024];
+    sanitize_name(obj, clean, sizeof(clean));
+    snprintf(out, out_size, "%s.%s", clean, suffix);
 }
 
 static int manifest_path(const BdtProject *project, const BdtTarget *target, const char *obj, const char *suffix,
@@ -74,22 +108,96 @@ static int manifest_path_readonly(const BdtProject *project, const BdtTarget *ta
     return manifest_path_ex(project, target, obj, suffix, out, out_size, 0);
 }
 
-static int read_manifest_u64(const char *path, const char *key, uint64_t *out) {
+static int read_manifest_u64s(const char *path, const char **keys, uint64_t *values, size_t count) {
     FILE *f = fopen(path, "r");
     if (!f) return 0;
+    size_t found = 0;
     char line[512];
-    int found = 0;
     while (fgets(line, sizeof(line), f)) {
         char k[96];
         uint64_t v = 0;
-        if (sscanf(line, "%95[^=]=%" SCNu64, k, &v) == 2 && !strcmp(k, key)) {
-            *out = v;
-            found = 1;
-            break;
+        if (sscanf(line, "%95[^=]=%" SCNu64, k, &v) != 2) continue;
+        for (size_t i = 0; i < count; ++i) {
+            if (!strcmp(k, keys[i])) {
+                values[i] = v;
+                found++;
+                break;
+            }
         }
+        if (found >= count) break;
     }
     fclose(f);
-    return found;
+    return found > 0;
+}
+
+static void quick_manifest_load_file(const BdtProject *project, const BdtTarget *target, const char *file_name) {
+    (void)project;
+    if (g_quick_manifest_count >= BDT_MAX_QUICK_MANIFESTS) return;
+    BdtQuickManifest *m = &g_quick_manifests[g_quick_manifest_count++];
+    snprintf(m->target, sizeof(m->target), "%s", target->name);
+    snprintf(m->file, sizeof(m->file), "%s", file_name);
+}
+
+static void quick_manifest_load_target(const BdtProject *project, const BdtTarget *target) {
+    if (!strcmp(g_quick_loaded_target, target->name)) return;
+    g_quick_manifest_count = 0;
+    snprintf(g_quick_loaded_target, sizeof(g_quick_loaded_target), "%s", target->name);
+    char dir[1024];
+    target_cache_dir(project, target, dir, sizeof(dir), 0);
+#ifdef _WIN32
+    char pattern[1200];
+    bdt_path_join(pattern, sizeof(pattern), dir, "*");
+    WIN32_FIND_DATAA fd;
+    HANDLE h = FindFirstFileA(pattern, &fd);
+    if (h == INVALID_HANDLE_VALUE) return;
+    do {
+        if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) continue;
+        if (strstr(fd.cFileName, ".compile") || strstr(fd.cFileName, ".link")) quick_manifest_load_file(project, target, fd.cFileName);
+    } while (FindNextFileA(h, &fd));
+    FindClose(h);
+#else
+    DIR *d = opendir(dir);
+    if (!d) return;
+    struct dirent *e;
+    while ((e = readdir(d))) {
+        if (strstr(e->d_name, ".compile") || strstr(e->d_name, ".link")) quick_manifest_load_file(project, target, e->d_name);
+    }
+    closedir(d);
+#endif
+    if (g_quick_manifest_count > 1) {
+        qsort(g_quick_manifests, g_quick_manifest_count, sizeof(g_quick_manifests[0]), quick_manifest_cmp);
+    }
+}
+
+static const BdtQuickManifest *quick_manifest_find(const BdtProject *project, const BdtTarget *target,
+                                                   const char *obj, const char *suffix) {
+    quick_manifest_load_target(project, target);
+    char file[1200];
+    manifest_file_name(obj, suffix, file, sizeof(file));
+    size_t lo = 0;
+    size_t hi = g_quick_manifest_count;
+    while (lo < hi) {
+        size_t mid = lo + (hi - lo) / 2;
+        int cmp = strcmp(g_quick_manifests[mid].file, file);
+        if (cmp == 0) return &g_quick_manifests[mid];
+        if (cmp < 0) lo = mid + 1;
+        else hi = mid;
+    }
+    return NULL;
+}
+
+int bdt_target_cache_has_manifests(const BdtProject *project, const BdtTarget *target) {
+    quick_manifest_load_target(project, target);
+    return g_quick_manifest_count > 0;
+}
+
+static int quick_manifest_read_values(const BdtProject *project, const BdtTarget *target, const BdtQuickManifest *manifest,
+                                      const char **keys, uint64_t *values, size_t count) {
+    if (!manifest) return 0;
+    char dir[1024], path[1600];
+    target_cache_dir(project, target, dir, sizeof(dir), 0);
+    bdt_path_join(path, sizeof(path), dir, manifest->file);
+    return read_manifest_u64s(path, keys, values, count);
 }
 
 static void set_reason(char *reason, size_t reason_size, const char *text) {
@@ -142,13 +250,11 @@ int bdt_compile_cache_fresh(const BdtProject *project, const BdtTarget *target, 
     }
     uint64_t src_hash, dep_hash, tool_hash, flags_hash, sig;
     sig = compile_signature(src, dep, tool, flags, &src_hash, &dep_hash, &tool_hash, &flags_hash);
-    uint64_t old = 0;
-    if (!read_manifest_u64(path, "signature", &old) || old != sig) {
-        uint64_t old_src = 0, old_dep = 0, old_tool = 0, old_flags = 0;
-        read_manifest_u64(path, "src_hash", &old_src);
-        read_manifest_u64(path, "dep_hash", &old_dep);
-        read_manifest_u64(path, "tool_hash", &old_tool);
-        read_manifest_u64(path, "flags_hash", &old_flags);
+    const char *keys[] = {"signature", "src_hash", "dep_hash", "tool_hash", "flags_hash"};
+    uint64_t values[] = {0, 0, 0, 0, 0};
+    read_manifest_u64s(path, keys, values, 5);
+    if (values[0] != sig) {
+        uint64_t old_src = values[1], old_dep = values[2], old_tool = values[3], old_flags = values[4];
         if (old_src && old_src != src_hash) set_reason(reason, reason_size, "source changed");
         else if (old_dep && old_dep != dep_hash) set_reason(reason, reason_size, "headers changed");
         else if (old_tool && old_tool != tool_hash) set_reason(reason, reason_size, "tool version changed");
@@ -162,6 +268,11 @@ int bdt_compile_cache_fresh(const BdtProject *project, const BdtTarget *target, 
 
 int bdt_compile_cache_quick_fresh(const BdtProject *project, const BdtTarget *target, const char *src, const char *obj,
                                   const char *dep, const char *tool, const char *flags, char *reason, size_t reason_size) {
+    const BdtQuickManifest *manifest = quick_manifest_find(project, target, obj, "compile");
+    if (!manifest) {
+        set_reason(reason, reason_size, "manifest missing");
+        return 0;
+    }
     if (!bdt_file_exists(obj)) {
         set_reason(reason, reason_size, "object missing");
         return 0;
@@ -170,16 +281,12 @@ int bdt_compile_cache_quick_fresh(const BdtProject *project, const BdtTarget *ta
         set_reason(reason, reason_size, "dependency file missing");
         return 0;
     }
-    char path[1024];
-    if (manifest_path(project, target, obj, "compile", path, sizeof(path)) != 0 || !bdt_file_exists(path)) {
-        set_reason(reason, reason_size, "manifest missing");
-        return 0;
-    }
-    uint64_t old_tool = 0, old_flags = 0;
+    const char *keys[] = {"tool_hash", "flags_hash"};
+    uint64_t values[] = {0, 0};
+    quick_manifest_read_values(project, target, manifest, keys, values, 2);
     uint64_t tool_hash = bdt_hash_tool_version(tool);
     uint64_t flags_hash = bdt_hash_text(flags);
-    read_manifest_u64(path, "tool_hash", &old_tool);
-    read_manifest_u64(path, "flags_hash", &old_flags);
+    uint64_t old_tool = values[0], old_flags = values[1];
     if (old_tool != tool_hash) {
         set_reason(reason, reason_size, "tool version changed");
         return 0;
@@ -258,8 +365,10 @@ int bdt_link_cache_fresh(const BdtProject *project, const BdtTarget *target, con
     }
     uint64_t objects_hash, tool_hash, flags_hash, script_hash;
     uint64_t sig = link_signature(objects, tool, flags, script, &objects_hash, &tool_hash, &flags_hash, &script_hash);
-    uint64_t old = 0;
-    if (!read_manifest_u64(path, "signature", &old) || old != sig) {
+    const char *keys[] = {"signature"};
+    uint64_t values[] = {0};
+    read_manifest_u64s(path, keys, values, 1);
+    if (values[0] != sig) {
         set_reason(reason, reason_size, "objects, linker script, flags, or tool changed");
         return 0;
     }
@@ -270,22 +379,22 @@ int bdt_link_cache_fresh(const BdtProject *project, const BdtTarget *target, con
 int bdt_link_cache_quick_fresh(const BdtProject *project, const BdtTarget *target, const char *out, const char *objects,
                                const char *tool, const char *flags, const char *script, char *reason, size_t reason_size) {
     (void)objects;
+    const BdtQuickManifest *manifest = quick_manifest_find(project, target, out, "link");
+    if (!manifest) {
+        set_reason(reason, reason_size, "manifest missing");
+        return 0;
+    }
     if (!bdt_file_exists(out)) {
         set_reason(reason, reason_size, "output missing");
         return 0;
     }
-    char path[1024];
-    if (manifest_path(project, target, out, "link", path, sizeof(path)) != 0 || !bdt_file_exists(path)) {
-        set_reason(reason, reason_size, "manifest missing");
-        return 0;
-    }
-    uint64_t old_tool = 0, old_flags = 0, old_script = 0;
+    const char *keys[] = {"tool_hash", "flags_hash", "script_hash"};
+    uint64_t values[] = {0, 0, 0};
+    quick_manifest_read_values(project, target, manifest, keys, values, 3);
     uint64_t tool_hash = bdt_hash_tool_version(tool);
     uint64_t flags_hash = bdt_hash_text(flags);
     uint64_t script_hash = script && script[0] ? bdt_hash_file(script) : 0;
-    read_manifest_u64(path, "tool_hash", &old_tool);
-    read_manifest_u64(path, "flags_hash", &old_flags);
-    read_manifest_u64(path, "script_hash", &old_script);
+    uint64_t old_tool = values[0], old_flags = values[1], old_script = values[2];
     if (old_tool != tool_hash || old_flags != flags_hash || old_script != script_hash) {
         set_reason(reason, reason_size, "linker script, flags, or tool changed");
         return 0;

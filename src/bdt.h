@@ -8,6 +8,15 @@
 
 #define BDT_MAX_ITEMS 256
 #define BDT_MAX_TEXT 4096
+#define BDT_MAX_CONFIG_SECTIONS 128
+#define BDT_MAX_CONFIG_ITEMS 128
+#define BDT_MAX_TARGETS 128
+#define BDT_MAX_OUTPUT_GROUPS 32
+#define BDT_MAX_APP_RULES 64
+#define BDT_MAX_VARS 128
+#define BDT_MAX_PLUGINS 32
+#define BDT_MAX_SUBPROJECTS 64
+#define BDT_MAX_BUILD_FILES 128
 
 typedef enum {
     BDT_LANG_EN = 0,
@@ -46,12 +55,12 @@ typedef struct {
 
 typedef struct {
     char name[96];
-    BdtPair items[BDT_MAX_ITEMS];
+    BdtPair items[BDT_MAX_CONFIG_ITEMS];
     size_t item_count;
 } BdtSection;
 
 typedef struct {
-    BdtSection sections[BDT_MAX_ITEMS];
+    BdtSection sections[BDT_MAX_CONFIG_SECTIONS];
     size_t section_count;
 } BdtConfig;
 
@@ -98,9 +107,9 @@ typedef struct {
     char secondary_output_group[96];
     char runtime_exclude_apps[BDT_MAX_TEXT];
     char skip_apps[BDT_MAX_TEXT];
-    BdtOutputGroup output_groups[BDT_MAX_ITEMS];
+    BdtOutputGroup output_groups[BDT_MAX_OUTPUT_GROUPS];
     size_t output_group_count;
-    BdtAppRule app_rules[BDT_MAX_ITEMS];
+    BdtAppRule app_rules[BDT_MAX_APP_RULES];
     size_t app_rule_count;
     int always;
     int cache;
@@ -119,15 +128,15 @@ typedef struct {
     char doctor_tools[BDT_MAX_TEXT];
     BdtCacheConfig cache_config;
     BdtLanguage lang;
-    BdtPair vars[BDT_MAX_ITEMS];
+    BdtPair vars[BDT_MAX_VARS];
     size_t var_count;
-    BdtPlugin plugins[BDT_MAX_ITEMS];
+    BdtPlugin plugins[BDT_MAX_PLUGINS];
     size_t plugin_count;
-    BdtTarget targets[BDT_MAX_ITEMS];
+    BdtTarget targets[BDT_MAX_TARGETS];
     size_t target_count;
-    char subprojects[BDT_MAX_ITEMS][512];
+    char subprojects[BDT_MAX_SUBPROJECTS][512];
     size_t subproject_count;
-    char build_files[BDT_MAX_ITEMS][1024];
+    char build_files[BDT_MAX_BUILD_FILES][1024];
     size_t build_file_count;
 } BdtProject;
 
@@ -197,6 +206,7 @@ int bdt_compile_cache_fresh(const BdtProject *project, const BdtTarget *target, 
                             const char *dep, const char *tool, const char *flags, char *reason, size_t reason_size);
 int bdt_compile_cache_quick_fresh(const BdtProject *project, const BdtTarget *target, const char *src, const char *obj,
                                   const char *dep, const char *tool, const char *flags, char *reason, size_t reason_size);
+int bdt_target_cache_has_manifests(const BdtProject *project, const BdtTarget *target);
 int bdt_compile_cache_store(const BdtProject *project, const BdtTarget *target, const char *src, const char *obj,
                             const char *dep, const char *tool, const char *flags);
 int bdt_link_cache_fresh(const BdtProject *project, const BdtTarget *target, const char *out, const char *objects,

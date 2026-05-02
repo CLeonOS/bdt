@@ -4,7 +4,7 @@
 #include <string.h>
 
 static void add_project_var(BdtProject *project, const char *key, const char *value) {
-    if (!key || !value || project->var_count >= BDT_MAX_ITEMS) return;
+    if (!key || !value || project->var_count >= BDT_MAX_VARS) return;
     for (size_t i = 0; i < project->var_count; ++i) {
         if (!strcmp(project->vars[i].key, key)) {
             snprintf(project->vars[i].value, sizeof(project->vars[i].value), "%s", value);
@@ -28,7 +28,7 @@ static BdtOutputGroup *find_or_add_output_group(BdtTarget *target, const char *n
     for (size_t i = 0; i < target->output_group_count; ++i) {
         if (!strcmp(target->output_groups[i].name, name)) return &target->output_groups[i];
     }
-    if (target->output_group_count >= BDT_MAX_ITEMS) return NULL;
+    if (target->output_group_count >= BDT_MAX_OUTPUT_GROUPS) return NULL;
     BdtOutputGroup *group = &target->output_groups[target->output_group_count++];
     memset(group, 0, sizeof(*group));
     snprintf(group->name, sizeof(group->name), "%s", name);
@@ -39,7 +39,7 @@ static BdtAppRule *find_or_add_app_rule(BdtTarget *target, const char *app_name)
     for (size_t r = 0; r < target->app_rule_count; ++r) {
         if (!strcmp(target->app_rules[r].name, app_name)) return &target->app_rules[r];
     }
-    if (target->app_rule_count >= BDT_MAX_ITEMS) return NULL;
+    if (target->app_rule_count >= BDT_MAX_APP_RULES) return NULL;
     BdtAppRule *rule = &target->app_rules[target->app_rule_count++];
     memset(rule, 0, sizeof(*rule));
     snprintf(rule->name, sizeof(rule->name), "%s", app_name);
@@ -59,7 +59,7 @@ static void load_plugins(BdtProject *project, const BdtConfig *config) {
     for (size_t i = 0; i < config->section_count; ++i) {
         const char *sname = config->sections[i].name;
         if (strncmp(sname, "plugin.", 7)) continue;
-        if (project->plugin_count >= BDT_MAX_ITEMS) break;
+        if (project->plugin_count >= BDT_MAX_PLUGINS) break;
         BdtPlugin *plugin = &project->plugins[project->plugin_count++];
         memset(plugin, 0, sizeof(*plugin));
         snprintf(plugin->name, sizeof(plugin->name), "%s", sname + 7);
@@ -76,7 +76,7 @@ static void load_targets(BdtProject *project, const BdtConfig *config) {
     for (size_t i = 0; i < config->section_count; ++i) {
         const char *sname = config->sections[i].name;
         if (strncmp(sname, "target.", 7)) continue;
-        if (project->target_count >= BDT_MAX_ITEMS) break;
+        if (project->target_count >= BDT_MAX_TARGETS) break;
         BdtTarget *t = &project->targets[project->target_count++];
         memset(t, 0, sizeof(*t));
         snprintf(t->name, sizeof(t->name), "%s", sname + 7);
@@ -199,7 +199,7 @@ int bdt_load_project(const char *root, const char *project_file, BdtProject *pro
     bdt_load_toolchain(project, config);
 
     const char *subs = bdt_config_get(config, "subprojects", "paths");
-    project->subproject_count = (size_t)bdt_split_list(subs, project->subprojects, BDT_MAX_ITEMS);
+    project->subproject_count = (size_t)bdt_split_list(subs, project->subprojects, BDT_MAX_SUBPROJECTS);
     const char *cache_path = bdt_config_get(config, "cache", "path");
     const char *cache_archive = bdt_config_get(config, "cache", "archive");
     const char *cache_pull = bdt_config_get(config, "cache", "pull_command");

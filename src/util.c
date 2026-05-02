@@ -15,10 +15,13 @@
 #endif
 
 int bdt_file_exists(const char *path) {
-    FILE *f = fopen(path, "rb");
-    if (!f) return 0;
-    fclose(f);
-    return 1;
+#ifdef _WIN32
+    DWORD attr = GetFileAttributesA(path);
+    return attr != INVALID_FILE_ATTRIBUTES && !(attr & FILE_ATTRIBUTE_DIRECTORY);
+#else
+    struct stat st;
+    return stat(path, &st) == 0 && !S_ISDIR(st.st_mode);
+#endif
 }
 
 int bdt_dir_exists(const char *path) {

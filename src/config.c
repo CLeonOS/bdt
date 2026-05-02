@@ -6,7 +6,7 @@ static BdtSection *find_or_add_section(BdtConfig *config, const char *name) {
     for (size_t i = 0; i < config->section_count; ++i) {
         if (!strcmp(config->sections[i].name, name)) return &config->sections[i];
     }
-    if (config->section_count >= BDT_MAX_ITEMS) return NULL;
+    if (config->section_count >= BDT_MAX_CONFIG_SECTIONS) return NULL;
     BdtSection *s = &config->sections[config->section_count++];
     memset(s, 0, sizeof(*s));
     snprintf(s->name, sizeof(s->name), "%s", name);
@@ -30,7 +30,7 @@ int bdt_read_config(const char *path, BdtConfig *config) {
             continue;
         }
         char *eq = strchr(p, '=');
-        if (!eq || !section || section->item_count >= BDT_MAX_ITEMS) continue;
+        if (!eq || !section || section->item_count >= BDT_MAX_CONFIG_ITEMS) continue;
         *eq = 0;
         char *key = bdt_trim(p);
         char *val = bdt_trim(eq + 1);

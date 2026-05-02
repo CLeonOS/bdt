@@ -6,6 +6,7 @@
 #include <windows.h>
 #else
 #include <dirent.h>
+#include <sys/stat.h>
 #endif
 
 static long elapsed_ms(clock_t start) {
@@ -16,6 +17,11 @@ typedef struct {
     char path[1024];
     char rel[1024];
 } AppFile;
+
+typedef struct {
+    char name[256];
+    char path[1024];
+} AppDir;
 
 static int ends_with(const char *s, const char *suffix) {
     size_t sl = strlen(s), xl = strlen(suffix);
@@ -70,7 +76,16 @@ static void collect_c_files(const BdtProject *project, const char *dir, AppFile 
         if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, "..")) continue;
         char path[1024];
         bdt_path_join(path, sizeof(path), dir, e->d_name);
-        if (bdt_dir_exists(path)) {
+        int is_dir = 0;
+#ifdef DT_DIR
+        if (e->d_type == DT_DIR) is_dir = 1;
+        else if (e->d_type == DT_UNKNOWN)
+#endif
+        {
+            struct stat st;
+            is_dir = stat(path, &st) == 0 && S_ISDIR(st.st_mode);
+        }
+        if (is_dir) {
             if (recursive) collect_c_files(project, path, files, count, recursive, suffix);
         } else if (ends_with(e->d_name, suffix) && *count < BDT_MAX_ITEMS) {
             snprintf(files[*count].path, sizeof(files[*count].path), "%s", path);
@@ -80,6 +95,68 @@ static void collect_c_files(const BdtProject *project, const char *dir, AppFile 
     }
     closedir(d);
 #endif
+}
+
+static void filter_files_by_suffix(const AppFile *files, size_t count, AppFile *out, size_t *out_count, const char *suffix) {
+    *out_count = 0;
+    for (size_t i = 0; i < count && *out_count < BDT_MAX_ITEMS; ++i) {
+        const char *base = strrchr(files[i].rel, '/');
+        base = base ? base + 1 : files[i].rel;
+        if (ends_with(base, suffix)) {
+            out[*out_count] = files[i];
+            (*out_count)++;
+        }
+    }
+}
+
+static void collect_child_dirs(const char *dir, AppDir *dirs, size_t *count) {
+    *count = 0;
+#ifdef _WIN32
+    char pattern[1024];
+    bdt_path_join(pattern, sizeof(pattern), dir, "*");
+    WIN32_FIND_DATAA fd;
+    HANDLE h = FindFirstFileA(pattern, &fd);
+    if (h == INVALID_HANDLE_VALUE) return;
+    do {
+        if (!strcmp(fd.cFileName, ".") || !strcmp(fd.cFileName, "..")) continue;
+        if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) || *count >= BDT_MAX_ITEMS) continue;
+        snprintf(dirs[*count].name, sizeof(dirs[*count].name), "%s", fd.cFileName);
+        bdt_path_join(dirs[*count].path, sizeof(dirs[*count].path), dir, fd.cFileName);
+        (*count)++;
+    } while (FindNextFileA(h, &fd));
+    FindClose(h);
+#else
+    DIR *d = opendir(dir);
+    if (!d) return;
+    struct dirent *e;
+    while ((e = readdir(d))) {
+        if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, "..")) continue;
+        char path[1024];
+        bdt_path_join(path, sizeof(path), dir, e->d_name);
+        int is_dir = 0;
+#ifdef DT_DIR
+        if (e->d_type == DT_DIR) is_dir = 1;
+        else if (e->d_type == DT_UNKNOWN)
+#endif
+        {
+            struct stat st;
+            is_dir = stat(path, &st) == 0 && S_ISDIR(st.st_mode);
+        }
+        if (is_dir && *count < BDT_MAX_ITEMS) {
+            snprintf(dirs[*count].name, sizeof(dirs[*count].name), "%s", e->d_name);
+            snprintf(dirs[*count].path, sizeof(dirs[*count].path), "%s", path);
+            (*count)++;
+        }
+    }
+    closedir(d);
+#endif
+}
+
+static const char *find_child_dir(const AppDir *dirs, size_t count, const char *name) {
+    for (size_t i = 0; i < count; ++i) {
+        if (!strcmp(dirs[i].name, name)) return dirs[i].path;
+    }
+    return NULL;
 }
 
 static void obj_for_rel(const char *obj_root, const char *rel, char *out, size_t out_size) {
@@ -96,7 +173,10 @@ static void obj_for_app_rel(const char *obj_root, const char *app, const char *r
         return;
     }
     char scoped[1024];
-    snprintf(scoped, sizeof(scoped), "__apps/%s/%s", app, rel);
+    snprintf(scoped, sizeof(scoped), "__apps/");
+    strncat(scoped, app, sizeof(scoped) - strlen(scoped) - 1);
+    strncat(scoped, "/", sizeof(scoped) - strlen(scoped) - 1);
+    strncat(scoped, rel, sizeof(scoped) - strlen(scoped) - 1);
     obj_for_rel(obj_root, scoped, out, out_size);
 }
 
@@ -217,13 +297,13 @@ static int compile_one_needs_scoped(BdtProject *project, BdtTarget *target, cons
                                     const char *rel, const char *obj_scope, const char *obj_root, char *obj_out,
                                     size_t obj_out_size) {
     char flags[BDT_MAX_TEXT], extra_flags[BDT_MAX_TEXT], all_flags[BDT_MAX_TEXT * 2], tool[256], dep[1060], reason[256];
+    obj_for_app_rel(obj_root, obj_scope, rel, obj_out, obj_out_size);
+    if (!target->cache) return 1;
     bdt_expand_vars(project, target->tool[0] ? target->tool : "{CC}", tool, sizeof(tool));
     bdt_expand_list_vars(project, target->cflags[0] ? target->cflags : target->flags, flags, sizeof(flags));
     bdt_expand_list_vars(project, extra_cflags ? extra_cflags : "", extra_flags, sizeof(extra_flags));
     snprintf(all_flags, sizeof(all_flags), "%s %s", flags, extra_flags);
-    obj_for_app_rel(obj_root, obj_scope, rel, obj_out, obj_out_size);
     snprintf(dep, sizeof(dep), "%s.d", obj_out);
-    if (!target->cache) return 1;
     return !bdt_compile_cache_quick_fresh(project, target, src, obj_out, dep, tool, all_flags, reason, sizeof(reason));
 }
 
@@ -261,6 +341,12 @@ static int link_app_needs(BdtProject *project, BdtTarget *target, const char *ou
     return !bdt_link_cache_quick_fresh(project, target, out, objects, tool, flags, linker, reason, sizeof(reason));
 }
 
+static int compile_one_needs_known_miss(const char *rel, const char *obj_scope, const char *obj_root, char *obj_out,
+                                        size_t obj_out_size) {
+    obj_for_app_rel(obj_root, obj_scope, rel, obj_out, obj_out_size);
+    return 1;
+}
+
 static void progress_step(size_t *current, size_t total, const char *label) {
     (*current)++;
     bdt_log_progress(*current, total, label);
@@ -296,6 +382,43 @@ static size_t count_rule_sources_needs(BdtProject *project, BdtTarget *target, c
             if (rule_excludes_source(rule, files[i].rel)) continue;
             if (compile_one_needs_scoped(project, target, rule->cflags, files[i].path, files[i].rel, app, obj_root, obj, sizeof(obj))) needed++;
             append_object_unique(objects, objects_size, obj);
+        }
+    }
+    return needed;
+}
+
+static size_t count_rule_sources_known_miss(BdtProject *project, const char *app, const BdtAppRule *rule,
+                                            const char *obj_root, char *objects, size_t objects_size) {
+    if (!rule) return 0;
+    size_t needed = 0;
+    char expanded[BDT_MAX_TEXT];
+    char sources[BDT_MAX_ITEMS][512];
+    bdt_expand_vars(project, rule->sources, expanded, sizeof(expanded));
+    int source_count = bdt_split_list(expanded, sources, BDT_MAX_ITEMS);
+    for (int s = 0; s < source_count; ++s) {
+        char src[1024], rel[1024], obj[1024];
+        bdt_expand_vars(project, sources[s], src, sizeof(src));
+        rel_from_root(project, src, rel, sizeof(rel));
+        obj_for_app_rel(obj_root, app, rel, obj, sizeof(obj));
+        append_object_unique(objects, objects_size, obj);
+        needed++;
+    }
+
+    char dirs[BDT_MAX_ITEMS][512];
+    bdt_expand_vars(project, rule->source_dirs, expanded, sizeof(expanded));
+    int dir_count = bdt_split_list(expanded, dirs, BDT_MAX_ITEMS);
+    for (int d = 0; d < dir_count; ++d) {
+        char dir[1024];
+        AppFile files[BDT_MAX_ITEMS];
+        size_t count = 0;
+        bdt_expand_vars(project, dirs[d], dir, sizeof(dir));
+        collect_c_files(project, dir, files, &count, 1, ".c");
+        for (size_t i = 0; i < count; ++i) {
+            char obj[1024];
+            if (rule_excludes_source(rule, files[i].rel)) continue;
+            obj_for_app_rel(obj_root, app, files[i].rel, obj, sizeof(obj));
+            append_object_unique(objects, objects_size, obj);
+            needed++;
         }
     }
     return needed;
@@ -357,6 +480,14 @@ static int compute_c_apps_status(BdtProject *project, BdtTarget *target, size_t 
         if (group_out[0]) bdt_mkdirs(group_out);
     }
 
+    AppFile top_all[BDT_MAX_ITEMS];
+    size_t top_all_count = 0;
+    collect_c_files(project, main_dir, top_all, &top_all_count, 0, ".c");
+    AppDir top_dirs[BDT_MAX_ITEMS];
+    size_t top_dir_count = 0;
+    collect_child_dirs(main_dir, top_dirs, &top_dir_count);
+    int cache_known_empty = target->cache && !bdt_target_cache_has_manifests(project, target);
+
     size_t total_steps = 0;
     char count_shared_objs[BDT_MAX_TEXT * 8] = "";
     char count_dirs[BDT_MAX_ITEMS][512];
@@ -369,7 +500,8 @@ static int compute_c_apps_status(BdtProject *project, BdtTarget *target, size_t 
         collect_c_files(project, dir, files, &count, 1, ".c");
         for (size_t i = 0; i < count; ++i) {
             char obj[1024];
-            if (compile_one_needs(project, target, NULL, files[i].path, files[i].rel, obj_root, obj, sizeof(obj))) {
+            if ((cache_known_empty ? compile_one_needs_known_miss(files[i].rel, NULL, obj_root, obj, sizeof(obj))
+                                   : compile_one_needs(project, target, NULL, files[i].path, files[i].rel, obj_root, obj, sizeof(obj)))) {
                 total_steps++;
                 if (compile_count) (*compile_count)++;
             }
@@ -383,7 +515,8 @@ static int compute_c_apps_status(BdtProject *project, BdtTarget *target, size_t 
         char src[1024], rel[1024], obj[1024];
         bdt_expand_vars(project, count_runtime_sources[r], src, sizeof(src));
         rel_from_root(project, src, rel, sizeof(rel));
-        if (compile_one_needs(project, target, NULL, src, rel, obj_root, obj, sizeof(obj))) {
+        if ((cache_known_empty ? compile_one_needs_known_miss(rel, NULL, obj_root, obj, sizeof(obj))
+                               : compile_one_needs(project, target, NULL, src, rel, obj_root, obj, sizeof(obj)))) {
             total_steps++;
             if (compile_count) (*compile_count)++;
         }
@@ -391,7 +524,7 @@ static int compute_c_apps_status(BdtProject *project, BdtTarget *target, size_t 
     }
     AppFile count_mains[BDT_MAX_ITEMS];
     size_t count_main_count = 0;
-    collect_c_files(project, main_dir, count_mains, &count_main_count, 0, entry_suffix);
+    filter_files_by_suffix(top_all, top_all_count, count_mains, &count_main_count, entry_suffix);
     for (size_t i = 0; i < count_main_count; ++i) {
         char app[128];
         const char *base = strrchr(count_mains[i].rel, '/');
@@ -402,7 +535,8 @@ static int compute_c_apps_status(BdtProject *project, BdtTarget *target, size_t 
         if (list_contains(target->skip_apps, app)) continue;
         char obj[1024], objects[BDT_MAX_TEXT * 8], out[1024];
         const BdtAppRule *rule = find_app_rule(target, app);
-        if (compile_one_needs(project, target, rule ? rule->cflags : NULL, count_mains[i].path, count_mains[i].rel, obj_root, obj, sizeof(obj))) {
+        if ((cache_known_empty ? compile_one_needs_known_miss(count_mains[i].rel, NULL, obj_root, obj, sizeof(obj))
+                               : compile_one_needs(project, target, rule ? rule->cflags : NULL, count_mains[i].path, count_mains[i].rel, obj_root, obj, sizeof(obj)))) {
             total_steps++;
             if (compile_count) (*compile_count)++;
         }
@@ -410,35 +544,33 @@ static int compute_c_apps_status(BdtProject *project, BdtTarget *target, size_t 
         if ((!rule || rule->include_runtime) && !list_contains(target->runtime_exclude_apps, app)) {
             strncat(objects, count_shared_runtime_objs, sizeof(objects) - strlen(objects) - 1);
         }
-        size_t rule_needs = count_rule_sources_needs(project, target, app, rule, obj_root, objects, sizeof(objects));
+        size_t rule_needs = cache_known_empty ? count_rule_sources_known_miss(project, app, rule, obj_root, objects, sizeof(objects))
+                                              : count_rule_sources_needs(project, target, app, rule, obj_root, objects, sizeof(objects));
         total_steps += rule_needs;
         if (compile_count) *compile_count += rule_needs;
-        AppFile top_extras[BDT_MAX_ITEMS];
-        size_t top_extra_count = 0;
-        collect_c_files(project, main_dir, top_extras, &top_extra_count, 0, ".c");
-        for (size_t e = 0; e < top_extra_count; ++e) {
-            const char *top_base = strrchr(top_extras[e].rel, '/');
-            top_base = top_base ? top_base + 1 : top_extras[e].rel;
+        for (size_t e = 0; e < top_all_count; ++e) {
+            const char *top_base = strrchr(top_all[e].rel, '/');
+            top_base = top_base ? top_base + 1 : top_all[e].rel;
             char prefix[160];
             snprintf(prefix, sizeof(prefix), "%s_", app);
             if (strncmp(top_base, prefix, strlen(prefix))) continue;
-            if (ends_with(top_extras[e].rel, entry_suffix) || (secondary_suffix[0] && ends_with(top_extras[e].rel, secondary_suffix))) continue;
-            if (source_list_contains_rel(project, target->runtime_sources, top_extras[e].rel)) continue;
+            if (ends_with(top_all[e].rel, entry_suffix) || (secondary_suffix[0] && ends_with(top_all[e].rel, secondary_suffix))) continue;
+            if (source_list_contains_rel(project, target->runtime_sources, top_all[e].rel)) continue;
             char shared_obj[1024];
-            obj_for_rel(obj_root, top_extras[e].rel, shared_obj, sizeof(shared_obj));
+            obj_for_rel(obj_root, top_all[e].rel, shared_obj, sizeof(shared_obj));
             if (object_list_contains(count_shared_objs, shared_obj) || object_list_contains(count_shared_runtime_objs, shared_obj)) continue;
             char extra_obj[1024];
-            if (compile_one_needs_scoped(project, target, rule ? rule->cflags : NULL, top_extras[e].path, top_extras[e].rel, app, obj_root, extra_obj, sizeof(extra_obj))) {
+            if ((cache_known_empty ? compile_one_needs_known_miss(top_all[e].rel, app, obj_root, extra_obj, sizeof(extra_obj))
+                                   : compile_one_needs_scoped(project, target, rule ? rule->cflags : NULL, top_all[e].path, top_all[e].rel, app, obj_root, extra_obj, sizeof(extra_obj)))) {
                 total_steps++;
                 if (compile_count) (*compile_count)++;
             }
             append_object_unique(objects, sizeof(objects), extra_obj);
         }
-        char app_subdir[1024];
         AppFile extras[BDT_MAX_ITEMS];
         size_t extra_count = 0;
-        bdt_path_join(app_subdir, sizeof(app_subdir), main_dir, app);
-        collect_c_files(project, app_subdir, extras, &extra_count, 0, ".c");
+        const char *app_subdir = find_child_dir(top_dirs, top_dir_count, app);
+        if (app_subdir) collect_c_files(project, app_subdir, extras, &extra_count, 0, ".c");
         for (size_t e = 0; e < extra_count; ++e) {
             if (ends_with(extras[e].rel, entry_suffix) || (secondary_suffix[0] && ends_with(extras[e].rel, secondary_suffix))) continue;
             if (source_list_contains_rel(project, target->runtime_sources, extras[e].rel)) continue;
@@ -446,7 +578,8 @@ static int compute_c_apps_status(BdtProject *project, BdtTarget *target, size_t 
             obj_for_rel(obj_root, extras[e].rel, shared_obj, sizeof(shared_obj));
             if (object_list_contains(count_shared_objs, shared_obj) || object_list_contains(count_shared_runtime_objs, shared_obj)) continue;
             char extra_obj[1024];
-            if (compile_one_needs_scoped(project, target, rule ? rule->cflags : NULL, extras[e].path, extras[e].rel, app, obj_root, extra_obj, sizeof(extra_obj))) {
+            if ((cache_known_empty ? compile_one_needs_known_miss(extras[e].rel, app, obj_root, extra_obj, sizeof(extra_obj))
+                                   : compile_one_needs_scoped(project, target, rule ? rule->cflags : NULL, extras[e].path, extras[e].rel, app, obj_root, extra_obj, sizeof(extra_obj)))) {
                 total_steps++;
                 if (compile_count) (*compile_count)++;
             }
@@ -460,7 +593,7 @@ static int compute_c_apps_status(BdtProject *project, BdtTarget *target, size_t 
         char app_elf[256];
         snprintf(app_elf, sizeof(app_elf), "%s.elf", app);
         bdt_path_join(out, sizeof(out), dest, app_elf);
-        if (link_app_needs(project, target, out, linker_buf[0] ? linker_buf : linker, objects)) {
+        if (cache_known_empty || link_app_needs(project, target, out, linker_buf[0] ? linker_buf : linker, objects)) {
             total_steps++;
             if (link_count) (*link_count)++;
             if (app_relink_count) (*app_relink_count)++;
@@ -468,7 +601,7 @@ static int compute_c_apps_status(BdtProject *project, BdtTarget *target, size_t 
     }
     AppFile count_secondary[BDT_MAX_ITEMS];
     size_t count_secondary_count = 0;
-    if (secondary_suffix[0]) collect_c_files(project, main_dir, count_secondary, &count_secondary_count, 0, secondary_suffix);
+    if (secondary_suffix[0]) filter_files_by_suffix(top_all, top_all_count, count_secondary, &count_secondary_count, secondary_suffix);
     for (size_t i = 0; i < count_secondary_count; ++i) {
         char app[128], obj[1024], out[1024], objects[BDT_MAX_TEXT * 2];
         const char *base = strrchr(count_secondary[i].rel, '/');
@@ -476,7 +609,8 @@ static int compute_c_apps_status(BdtProject *project, BdtTarget *target, size_t 
         snprintf(app, sizeof(app), "%s", base);
         char *suffix = strstr(app, secondary_suffix);
         if (suffix) *suffix = 0;
-        if (compile_one_needs(project, target, NULL, count_secondary[i].path, count_secondary[i].rel, obj_root, obj, sizeof(obj))) {
+        if ((cache_known_empty ? compile_one_needs_known_miss(count_secondary[i].rel, NULL, obj_root, obj, sizeof(obj))
+                               : compile_one_needs(project, target, NULL, count_secondary[i].path, count_secondary[i].rel, obj_root, obj, sizeof(obj)))) {
             total_steps++;
             if (compile_count) (*compile_count)++;
         }
@@ -488,7 +622,7 @@ static int compute_c_apps_status(BdtProject *project, BdtTarget *target, size_t 
         snprintf(app_elf, sizeof(app_elf), "%s.elf", app);
         bdt_path_join(out, sizeof(out), group_out[0] ? group_out : out_dir, app_elf);
         snprintf(objects, sizeof(objects), "\"%s\"", obj);
-        if (link_app_needs(project, target, out, group_linker[0] ? group_linker : linker, objects)) {
+        if (cache_known_empty || link_app_needs(project, target, out, group_linker[0] ? group_linker : linker, objects)) {
             total_steps++;
             if (link_count) (*link_count)++;
             if (app_relink_count) (*app_relink_count)++;
@@ -524,6 +658,13 @@ int bdt_run_c_apps_target(BdtProject *project, BdtTarget *target) {
         if (group_out[0]) bdt_mkdirs(group_out);
     }
 
+    AppFile top_all[BDT_MAX_ITEMS];
+    size_t top_all_count = 0;
+    collect_c_files(project, main_dir, top_all, &top_all_count, 0, ".c");
+    AppDir top_dirs[BDT_MAX_ITEMS];
+    size_t top_dir_count = 0;
+    collect_child_dirs(main_dir, top_dirs, &top_dir_count);
+
     char shared_objs[BDT_MAX_TEXT * 8] = "";
     char dirs[BDT_MAX_ITEMS][512];
     int dir_count = bdt_split_list(target->common_dirs, dirs, BDT_MAX_ITEMS);
@@ -557,7 +698,7 @@ int bdt_run_c_apps_target(BdtProject *project, BdtTarget *target) {
 
     AppFile mains[BDT_MAX_ITEMS];
     size_t main_count = 0;
-    collect_c_files(project, main_dir, mains, &main_count, 0, entry_suffix);
+    filter_files_by_suffix(top_all, top_all_count, mains, &main_count, entry_suffix);
     for (size_t i = 0; i < main_count; ++i) {
         char app[128], obj[1024], objects[BDT_MAX_TEXT * 8], out[1024];
         const char *base = strrchr(mains[i].rel, '/');
@@ -578,30 +719,26 @@ int bdt_run_c_apps_target(BdtProject *project, BdtTarget *target) {
 
         AppFile extras[BDT_MAX_ITEMS];
         size_t extra_count = 0;
-        AppFile top_extras[BDT_MAX_ITEMS];
-        size_t top_extra_count = 0;
-        char app_subdir[1024];
-        collect_c_files(project, main_dir, top_extras, &top_extra_count, 0, ".c");
-        for (size_t e = 0; e < top_extra_count; ++e) {
-            const char *top_base = strrchr(top_extras[e].rel, '/');
-            top_base = top_base ? top_base + 1 : top_extras[e].rel;
+        const char *app_subdir = find_child_dir(top_dirs, top_dir_count, app);
+        for (size_t e = 0; e < top_all_count; ++e) {
+            const char *top_base = strrchr(top_all[e].rel, '/');
+            top_base = top_base ? top_base + 1 : top_all[e].rel;
             char prefix[160];
             snprintf(prefix, sizeof(prefix), "%s_", app);
             if (strncmp(top_base, prefix, strlen(prefix))) continue;
-            if (ends_with(top_extras[e].rel, entry_suffix) || (secondary_suffix[0] && ends_with(top_extras[e].rel, secondary_suffix))) continue;
-            if (source_list_contains_rel(project, target->runtime_sources, top_extras[e].rel)) continue;
+            if (ends_with(top_all[e].rel, entry_suffix) || (secondary_suffix[0] && ends_with(top_all[e].rel, secondary_suffix))) continue;
+            if (source_list_contains_rel(project, target->runtime_sources, top_all[e].rel)) continue;
             char shared_obj[1024];
-            obj_for_rel(obj_root, top_extras[e].rel, shared_obj, sizeof(shared_obj));
+            obj_for_rel(obj_root, top_all[e].rel, shared_obj, sizeof(shared_obj));
             if (object_list_contains(shared_objs, shared_obj) || object_list_contains(runtime_objs, shared_obj)) continue;
             char extra_obj[1024];
             int compiled_extra = 0;
-            if (compile_one_scoped(project, target, rule ? rule->cflags : NULL, top_extras[e].path, top_extras[e].rel, app, obj_root, extra_obj, sizeof(extra_obj), &compiled_extra) != 0) return -1;
-            if (compiled_extra) progress_step(&progress, total_steps, top_extras[e].rel);
+            if (compile_one_scoped(project, target, rule ? rule->cflags : NULL, top_all[e].path, top_all[e].rel, app, obj_root, extra_obj, sizeof(extra_obj), &compiled_extra) != 0) return -1;
+            if (compiled_extra) progress_step(&progress, total_steps, top_all[e].rel);
             append_object_unique(objects, sizeof(objects), extra_obj);
         }
 
-        bdt_path_join(app_subdir, sizeof(app_subdir), main_dir, app);
-        collect_c_files(project, app_subdir, extras, &extra_count, 0, ".c");
+        if (app_subdir) collect_c_files(project, app_subdir, extras, &extra_count, 0, ".c");
         for (size_t e = 0; e < extra_count; ++e) {
             if (ends_with(extras[e].rel, entry_suffix) || (secondary_suffix[0] && ends_with(extras[e].rel, secondary_suffix))) continue;
             if (source_list_contains_rel(project, target->runtime_sources, extras[e].rel)) continue;
@@ -632,7 +769,7 @@ int bdt_run_c_apps_target(BdtProject *project, BdtTarget *target) {
 
     AppFile secondary_entries[BDT_MAX_ITEMS];
     size_t secondary_count = 0;
-    if (secondary_suffix[0]) collect_c_files(project, main_dir, secondary_entries, &secondary_count, 0, secondary_suffix);
+    if (secondary_suffix[0]) filter_files_by_suffix(top_all, top_all_count, secondary_entries, &secondary_count, secondary_suffix);
     for (size_t i = 0; i < secondary_count; ++i) {
         char app[128], obj[1024], out[1024], objects[BDT_MAX_TEXT * 2];
         const char *base = strrchr(secondary_entries[i].rel, '/');

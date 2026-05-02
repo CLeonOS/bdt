@@ -16,7 +16,7 @@ int main(int argc, char **argv) {
         free(project);
         return 2;
     }
-    if (project->var_count < BDT_MAX_ITEMS) {
+    if (project->var_count < BDT_MAX_VARS) {
         snprintf(project->vars[project->var_count].key, sizeof(project->vars[project->var_count].key), "jobs");
         snprintf(project->vars[project->var_count].value, sizeof(project->vars[project->var_count].value), "%d", cli.jobs);
         project->var_count++;
@@ -96,7 +96,7 @@ int main(int argc, char **argv) {
             free(project);
             return 1;
         }
-        if (cli.bench && project->var_count < BDT_MAX_ITEMS) {
+        if (cli.bench && project->var_count < BDT_MAX_VARS) {
             snprintf(project->vars[project->var_count].key, sizeof(project->vars[project->var_count].key), "bench_trace");
             snprintf(project->vars[project->var_count].value, sizeof(project->vars[project->var_count].value), "%s", trace_path);
             project->var_count++;

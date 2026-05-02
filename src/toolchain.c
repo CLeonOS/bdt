@@ -4,7 +4,7 @@
 #include <string.h>
 
 static void add_var(BdtProject *project, const char *key, const char *value) {
-    if (!key || !value || project->var_count >= BDT_MAX_ITEMS) return;
+    if (!key || !value || project->var_count >= BDT_MAX_VARS) return;
     for (size_t i = 0; i < project->var_count; ++i) {
         if (!strcmp(project->vars[i].key, key)) {
             snprintf(project->vars[i].value, sizeof(project->vars[i].value), "%s", value);
