@@ -160,6 +160,10 @@ int bdt_parse_cli(int argc, char **argv, BdtCli *cli) {
             cli->trace = 1;
             if (i + 1 < argc && argv[i + 1][0] != '-') cli->trace_target = argv[++i];
         }
+        else if (!strcmp(a, "bench")) {
+            cli->bench = 1;
+            if (i + 1 < argc && argv[i + 1][0] != '-') cli->bench_target = argv[++i];
+        }
         else if (!strcmp(a, "explain")) {
             cli->explain = 1;
             if (i + 1 < argc && argv[i + 1][0] != '-') cli->explain_target = argv[++i];
@@ -187,6 +191,7 @@ int bdt_parse_cli(int argc, char **argv, BdtCli *cli) {
             printf("bdt why <file|target>\n");
             printf("bdt status [target]\n");
             printf("bdt trace [target] [--trace-out file]\n");
+            printf("bdt bench [target] [--trace-out file]\n");
             printf("bdt explain <target>\n");
             printf("bdt clean <target>\n");
             printf("bdt doctor\n");

@@ -20,6 +20,7 @@ dependencies, runs toolchain commands, and emits structured build logs.
   build files, and subprojects.
 - `why`, `status`, and `trace` commands for build ownership, rebuild previews,
   and JSON build event traces.
+- `bench` command for target, compile, command, and link timing reports.
 - C application builder support for CLeonOS user programs.
 
 ## Build
@@ -340,6 +341,7 @@ build/bdt/bdt view
 build/bdt/bdt why src/main.c
 build/bdt/bdt status app
 build/bdt/bdt trace app --trace-out build/trace.json
+build/bdt/bdt bench app
 build/bdt/bdt iso -j 4
 build/bdt/bdt explain iso
 build/bdt/bdt clean kernel-objects
@@ -365,6 +367,9 @@ Useful flags:
   validation.
 - `trace [target] [--trace-out file]`: run a build and write a JSON event trace
   with target, command, compile/link cache, return code, and duration events.
+- `bench [target] [--trace-out file]`: run a traced build and print slow target,
+  compile, command, and link rankings. Without `--trace-out`, the trace is saved
+  to `{build_dir}/bench-trace.json`.
 - `--verbose`: print shell commands before running them.
 - `-j N`: set job count. Current target types may still run serially unless
   they implement parallel execution.

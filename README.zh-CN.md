@@ -17,6 +17,7 @@ bdt (Build Tool) 是一个用 C 编写的小型构建工具，面向 CLeonOS，�
 - 中文和英文日志。
 - ncurses 项目结构查看器，可查看 targets、依赖、插件、缓存、构建文件和子项目。
 - `why`、`status` 和 `trace` 命令，用于查看构建归属、重建预览和 JSON 构建事件追踪。
+- `bench` 命令，用于输出 target、源码编译、命令和链接耗时排行。
 - 支持 CLeonOS 用户态应用构建规则。
 
 ## 构建 bdt
@@ -333,6 +334,7 @@ build/bdt/bdt view
 build/bdt/bdt why src/main.c
 build/bdt/bdt status app
 build/bdt/bdt trace app --trace-out build/trace.json
+build/bdt/bdt bench app
 build/bdt/bdt iso -j 4
 build/bdt/bdt explain iso
 build/bdt/bdt clean kernel-objects
@@ -356,6 +358,9 @@ build/bdt/bdt cache push
   近似判断；真正构建仍然执行完整 hash 校验。
 - `trace [target] [--trace-out file]`：执行一次构建，并写出 JSON 事件追踪，包含
   target、command、compile/link cache、返回码和耗时。
+- `bench [target] [--trace-out file]`：执行一次带 trace 的构建，并输出慢 target、
+  慢源码编译、慢命令和慢链接排行。未指定 `--trace-out` 时，trace 写到
+  `{build_dir}/bench-trace.json`。
 - `--verbose`：执行命令前打印完整 shell 命令。
 - `-j N`：设置并行数。当前部分 target 类型仍可能串行执行。
 - `--no-cache`：忽略缓存检查。

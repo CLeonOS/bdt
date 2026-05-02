@@ -80,24 +80,41 @@ int main(int argc, char **argv) {
     }
 
     const char *target = cli.target ? cli.target : project->default_target;
+    if (cli.bench && cli.bench_target) target = cli.bench_target;
     if (cli.trace && cli.trace_target) target = cli.trace_target;
-    if (cli.trace) {
+    if (cli.trace || cli.bench) {
         char default_trace[1024];
         const char *trace_path = cli.trace_path;
         if (!trace_path) {
             char build_root[1024];
             bdt_path_join(build_root, sizeof(build_root), project->root, project->build_dir);
             bdt_mkdirs(build_root);
-            bdt_path_join(default_trace, sizeof(default_trace), build_root, "trace.json");
+            bdt_path_join(default_trace, sizeof(default_trace), build_root, cli.bench ? "bench-trace.json" : "trace.json");
             trace_path = default_trace;
         }
         if (bdt_trace_begin(project, trace_path) != 0) {
             free(project);
             return 1;
         }
+        if (cli.bench && project->var_count < BDT_MAX_ITEMS) {
+            snprintf(project->vars[project->var_count].key, sizeof(project->vars[project->var_count].key), "bench_trace");
+            snprintf(project->vars[project->var_count].value, sizeof(project->vars[project->var_count].value), "%s", trace_path);
+            project->var_count++;
+        }
     }
     int rc = bdt_run_target(project, target, cli.no_cache) == 0 ? 0 : 1;
-    if (cli.trace) bdt_trace_end(rc);
+    if (cli.trace || cli.bench) {
+        const char *trace_path = cli.trace_path;
+        char default_trace[1024];
+        if (!trace_path) {
+            char build_root[1024];
+            bdt_path_join(build_root, sizeof(build_root), project->root, project->build_dir);
+            bdt_path_join(default_trace, sizeof(default_trace), build_root, cli.bench ? "bench-trace.json" : "trace.json");
+            trace_path = default_trace;
+        }
+        bdt_trace_end(rc);
+        if (cli.bench) bdt_bench_report(trace_path);
+    }
     free(project);
     return rc;
 }

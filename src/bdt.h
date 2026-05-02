@@ -145,6 +145,7 @@ typedef struct {
     int why;
     int status;
     int trace;
+    int bench;
     int clean_target;
     int doctor;
     int cache_cmd;
@@ -155,6 +156,7 @@ typedef struct {
     const char *status_target;
     const char *trace_target;
     const char *trace_path;
+    const char *bench_target;
     const char *clean_name;
     const char *cache_action;
     const char *cache_arg;
@@ -214,6 +216,7 @@ int bdt_trace_begin(const BdtProject *project, const char *path);
 void bdt_trace_end(int rc);
 int bdt_trace_enabled(void);
 void bdt_trace_event(const char *kind, const char *target, const char *detail, int rc, long duration_ms);
+int bdt_bench_report(const char *trace_path);
 
 int bdt_mkdirs(const char *path);
 int bdt_file_exists(const char *path);
