@@ -97,6 +97,14 @@ static void collect_c_files(const BdtProject *project, const char *dir, AppFile 
 #endif
 }
 
+static void collect_c_app_sources(const BdtProject *project, const char *dir, AppFile *files, size_t *count,
+                                  int recursive) {
+    collect_c_files(project, dir, files, count, recursive, ".c");
+    collect_c_files(project, dir, files, count, recursive, ".cpp");
+    collect_c_files(project, dir, files, count, recursive, ".cc");
+    collect_c_files(project, dir, files, count, recursive, ".cxx");
+}
+
 static void filter_files_by_suffix(const AppFile *files, size_t count, AppFile *out, size_t *out_count, const char *suffix) {
     *out_count = 0;
     for (size_t i = 0; i < count && *out_count < BDT_MAX_ITEMS; ++i) {
@@ -218,6 +226,47 @@ static const BdtOutputGroup *find_output_group(const BdtTarget *target, const ch
     return NULL;
 }
 
+static int is_cxx_source(const char *src) {
+    const char *ext = src ? strrchr(src, '.') : NULL;
+    return ext != NULL && (!strcmp(ext, ".cpp") || !strcmp(ext, ".cc") || !strcmp(ext, ".cxx") || !strcmp(ext, ".C"));
+}
+
+static int is_asm_source(const char *src) {
+    const char *ext = src ? strrchr(src, '.') : NULL;
+    return ext != NULL && !strcmp(ext, ".S");
+}
+
+static void compile_tool_for_source(BdtProject *project, BdtTarget *target, const char *src, char *tool,
+                                    size_t tool_size) {
+    if (is_cxx_source(src)) {
+        bdt_expand_vars(project, "{USER_CXX}", tool, tool_size);
+        if (tool[0]) return;
+        bdt_expand_vars(project, "{KERNEL_CXX}", tool, tool_size);
+        if (tool[0]) return;
+    }
+
+    bdt_expand_vars(project, target->tool[0] ? target->tool : "{CC}", tool, tool_size);
+}
+
+static void compile_flags_for_source(BdtProject *project, BdtTarget *target, const char *extra_cflags, const char *src,
+                                     char *out, size_t out_size) {
+    char flags[BDT_MAX_TEXT];
+    char extra_flags[BDT_MAX_TEXT];
+    const char *base_flags = target->flags;
+
+    if (is_cxx_source(src) && target->cxxflags[0]) {
+        base_flags = target->cxxflags;
+    } else if (is_asm_source(src) && target->asflags[0]) {
+        base_flags = target->asflags;
+    } else if (target->cflags[0]) {
+        base_flags = target->cflags;
+    }
+
+    bdt_expand_list_vars(project, base_flags, flags, sizeof(flags));
+    bdt_expand_list_vars(project, extra_cflags ? extra_cflags : "", extra_flags, sizeof(extra_flags));
+    snprintf(out, out_size, "%s %s", flags, extra_flags);
+}
+
 static const BdtOutputGroup *output_group_for_app(const BdtTarget *target, const char *app, const BdtAppRule *rule) {
     if (rule && rule->output_group[0]) return find_output_group(target, rule->output_group);
     for (size_t i = 0; i < target->output_group_count; ++i) {
@@ -255,12 +304,10 @@ static int source_list_contains_rel(BdtProject *project, const char *source_list
 static int compile_one_scoped(BdtProject *project, BdtTarget *target, const char *extra_cflags, const char *src,
                               const char *rel, const char *obj_scope, const char *obj_root, char *obj_out,
                               size_t obj_out_size, int *compiled_out) {
-    char flags[BDT_MAX_TEXT], extra_flags[BDT_MAX_TEXT], all_flags[BDT_MAX_TEXT * 2], tool[256], obj_dir[1024], dep[1060];
+    char all_flags[BDT_MAX_TEXT * 2], tool[256], obj_dir[1024], dep[1060];
     char cmd[BDT_MAX_TEXT * 3], reason[256];
-    bdt_expand_vars(project, target->tool[0] ? target->tool : "{CC}", tool, sizeof(tool));
-    bdt_expand_list_vars(project, target->cflags[0] ? target->cflags : target->flags, flags, sizeof(flags));
-    bdt_expand_list_vars(project, extra_cflags ? extra_cflags : "", extra_flags, sizeof(extra_flags));
-    snprintf(all_flags, sizeof(all_flags), "%s %s", flags, extra_flags);
+    compile_tool_for_source(project, target, src, tool, sizeof(tool));
+    compile_flags_for_source(project, target, extra_cflags, src, all_flags, sizeof(all_flags));
     obj_for_app_rel(obj_root, obj_scope, rel, obj_out, obj_out_size);
     snprintf(obj_dir, sizeof(obj_dir), "%s", obj_out);
     char *cut = strrchr(obj_dir, '/');
@@ -296,13 +343,11 @@ static int compile_one(BdtProject *project, BdtTarget *target, const char *extra
 static int compile_one_needs_scoped(BdtProject *project, BdtTarget *target, const char *extra_cflags, const char *src,
                                     const char *rel, const char *obj_scope, const char *obj_root, char *obj_out,
                                     size_t obj_out_size) {
-    char flags[BDT_MAX_TEXT], extra_flags[BDT_MAX_TEXT], all_flags[BDT_MAX_TEXT * 2], tool[256], dep[1060], reason[256];
+    char all_flags[BDT_MAX_TEXT * 2], tool[256], dep[1060], reason[256];
     obj_for_app_rel(obj_root, obj_scope, rel, obj_out, obj_out_size);
     if (!target->cache) return 1;
-    bdt_expand_vars(project, target->tool[0] ? target->tool : "{CC}", tool, sizeof(tool));
-    bdt_expand_list_vars(project, target->cflags[0] ? target->cflags : target->flags, flags, sizeof(flags));
-    bdt_expand_list_vars(project, extra_cflags ? extra_cflags : "", extra_flags, sizeof(extra_flags));
-    snprintf(all_flags, sizeof(all_flags), "%s %s", flags, extra_flags);
+    compile_tool_for_source(project, target, src, tool, sizeof(tool));
+    compile_flags_for_source(project, target, extra_cflags, src, all_flags, sizeof(all_flags));
     snprintf(dep, sizeof(dep), "%s.d", obj_out);
     return !bdt_compile_cache_quick_fresh(project, target, src, obj_out, dep, tool, all_flags, reason, sizeof(reason));
 }
@@ -482,7 +527,7 @@ static int compute_c_apps_status(BdtProject *project, BdtTarget *target, size_t 
 
     AppFile top_all[BDT_MAX_ITEMS];
     size_t top_all_count = 0;
-    collect_c_files(project, main_dir, top_all, &top_all_count, 0, ".c");
+    collect_c_app_sources(project, main_dir, top_all, &top_all_count, 0);
     AppDir top_dirs[BDT_MAX_ITEMS];
     size_t top_dir_count = 0;
     collect_child_dirs(main_dir, top_dirs, &top_dir_count);
@@ -570,7 +615,7 @@ static int compute_c_apps_status(BdtProject *project, BdtTarget *target, size_t 
         AppFile extras[BDT_MAX_ITEMS];
         size_t extra_count = 0;
         const char *app_subdir = find_child_dir(top_dirs, top_dir_count, app);
-        if (app_subdir) collect_c_files(project, app_subdir, extras, &extra_count, 0, ".c");
+        if (app_subdir) collect_c_app_sources(project, app_subdir, extras, &extra_count, 0);
         for (size_t e = 0; e < extra_count; ++e) {
             if (ends_with(extras[e].rel, entry_suffix) || (secondary_suffix[0] && ends_with(extras[e].rel, secondary_suffix))) continue;
             if (source_list_contains_rel(project, target->runtime_sources, extras[e].rel)) continue;
@@ -660,7 +705,7 @@ int bdt_run_c_apps_target(BdtProject *project, BdtTarget *target) {
 
     AppFile top_all[BDT_MAX_ITEMS];
     size_t top_all_count = 0;
-    collect_c_files(project, main_dir, top_all, &top_all_count, 0, ".c");
+    collect_c_app_sources(project, main_dir, top_all, &top_all_count, 0);
     AppDir top_dirs[BDT_MAX_ITEMS];
     size_t top_dir_count = 0;
     collect_child_dirs(main_dir, top_dirs, &top_dir_count);
@@ -738,7 +783,7 @@ int bdt_run_c_apps_target(BdtProject *project, BdtTarget *target) {
             append_object_unique(objects, sizeof(objects), extra_obj);
         }
 
-        if (app_subdir) collect_c_files(project, app_subdir, extras, &extra_count, 0, ".c");
+        if (app_subdir) collect_c_app_sources(project, app_subdir, extras, &extra_count, 0);
         for (size_t e = 0; e < extra_count; ++e) {
             if (ends_with(extras[e].rel, entry_suffix) || (secondary_suffix[0] && ends_with(extras[e].rel, secondary_suffix))) continue;
             if (source_list_contains_rel(project, target->runtime_sources, extras[e].rel)) continue;
