@@ -7,6 +7,23 @@ int main(int argc, char **argv) {
     BdtCli cli;
     bdt_parse_cli(argc, argv, &cli);
 
+    if (cli.help) {
+        printf("bdt [target] [--project file] [-j N] [--list] [--scan] [--graph] [--no-cache]\n");
+        printf("bdt view\n");
+        printf("bdt why <file|target>\n");
+        printf("bdt status [target]\n");
+        printf("bdt trace [target] [--trace-out file]\n");
+        printf("bdt bench [target] [--trace-out file]\n");
+        printf("bdt explain <target>\n");
+        printf("bdt clean <target>\n");
+        printf("bdt doctor\n");
+        printf("bdt cache export [archive]\n");
+        printf("bdt cache import [archive]\n");
+        printf("bdt cache pull|push\n");
+        printf("bdt log-style [default|kernel]\n");
+        return 0;
+    }
+
     if (cli.log_style_cmd) {
         return bdt_log_style_command(cli.log_style_value) == 0 ? 0 : 1;
     }
@@ -15,8 +32,12 @@ int main(int argc, char **argv) {
     if (bdt_abs_path(root, sizeof(root), ".") != 0) snprintf(root, sizeof(root), ".");
 
     BdtProject *project = (BdtProject *)calloc(1, sizeof(BdtProject));
-    if (!project) return 2;
+    if (!project) {
+        fprintf(stderr, "bdt: failed to allocate project state (%lu bytes)\n", (unsigned long)sizeof(BdtProject));
+        return 2;
+    }
     if (bdt_load_project(root, cli.project_file, project) != 0) {
+        fprintf(stderr, "bdt: failed to load project '%s' from root '%s'\n", cli.project_file, root);
         free(project);
         return 2;
     }

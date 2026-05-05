@@ -3,6 +3,9 @@
 #include <stdarg.h>
 #include <stdlib.h>
 #include <string.h>
+#ifdef BDT_PLATFORM_CLEONOS
+#include <cleonos_syscall.h>
+#endif
 #ifdef _WIN32
 #include <direct.h>
 #include <windows.h>
@@ -35,9 +38,31 @@ static BdtLogStyle parse_style(const char *text, int *ok) {
     return BDT_LOG_STYLE_DEFAULT;
 }
 
+#ifdef BDT_PLATFORM_CLEONOS
+static const char *cleonos_user_home(void) {
+    static char home[CLEONOS_USER_HOME_MAX];
+    cleonos_user_info info;
+
+    memset(&info, 0, sizeof(info));
+    if (cleonos_sys_user_current(&info) != 0ULL && info.home[0] == '/') {
+        snprintf(home, sizeof(home), "%s", info.home);
+        return home;
+    }
+
+    return "/";
+}
+#endif
+
 static int user_config_dir(char *out, size_t out_size) {
     const char *base = getenv("BDT_CONFIG_HOME");
-#ifdef _WIN32
+    if (base && *base) return bdt_path_join(out, out_size, base, "bdt");
+#ifdef BDT_PLATFORM_CLEONOS
+    {
+        char config_home[1024];
+        if (bdt_path_join(config_home, sizeof(config_home), cleonos_user_home(), ".config") != 0) return -1;
+        return bdt_path_join(out, out_size, config_home, "bdt");
+    }
+#elif defined(_WIN32)
     if (!base || !*base) base = getenv("APPDATA");
     if (base && *base) return bdt_path_join(out, out_size, base, "bdt");
     base = getenv("USERPROFILE");

@@ -172,11 +172,15 @@ int bdt_load_project(const char *root, const char *project_file, BdtProject *pro
     memset(project, 0, sizeof(*project));
     snprintf(project->root, sizeof(project->root), "%s", root);
     BdtConfig *config = (BdtConfig *)calloc(1, sizeof(BdtConfig));
-    if (!config) return -1;
+    if (!config) {
+        fprintf(stderr, "bdt: failed to allocate config state (%lu bytes)\n", (unsigned long)sizeof(BdtConfig));
+        return -1;
+    }
     char path[1024];
-    bdt_path_join(path, sizeof(path), root, project_file);
+    if (bdt_path_is_absolute(project_file)) snprintf(path, sizeof(path), "%s", project_file);
+    else bdt_path_join(path, sizeof(path), root, project_file);
     if (bdt_read_config(path, config) != 0) {
-        bdt_log(BDT_LOG_ERROR, "cannot read %s", path);
+        fprintf(stderr, "bdt: cannot read project file '%s'\n", path);
         free(config);
         return -1;
     }

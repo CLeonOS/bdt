@@ -6,17 +6,39 @@
 #include <stdio.h>
 #include <time.h>
 
+#ifndef BDT_MAX_ITEMS
 #define BDT_MAX_ITEMS 256
+#endif
+#ifndef BDT_MAX_TEXT
 #define BDT_MAX_TEXT 4096
+#endif
+#ifndef BDT_MAX_CONFIG_SECTIONS
 #define BDT_MAX_CONFIG_SECTIONS 128
+#endif
+#ifndef BDT_MAX_CONFIG_ITEMS
 #define BDT_MAX_CONFIG_ITEMS 128
+#endif
+#ifndef BDT_MAX_TARGETS
 #define BDT_MAX_TARGETS 128
+#endif
+#ifndef BDT_MAX_OUTPUT_GROUPS
 #define BDT_MAX_OUTPUT_GROUPS 32
+#endif
+#ifndef BDT_MAX_APP_RULES
 #define BDT_MAX_APP_RULES 64
+#endif
+#ifndef BDT_MAX_VARS
 #define BDT_MAX_VARS 128
+#endif
+#ifndef BDT_MAX_PLUGINS
 #define BDT_MAX_PLUGINS 32
+#endif
+#ifndef BDT_MAX_SUBPROJECTS
 #define BDT_MAX_SUBPROJECTS 64
+#endif
+#ifndef BDT_MAX_BUILD_FILES
 #define BDT_MAX_BUILD_FILES 128
+#endif
 
 typedef enum {
     BDT_LANG_EN = 0,
@@ -161,6 +183,7 @@ typedef struct {
     int log_style_cmd;
     int no_cache;
     int verbose;
+    int help;
     const char *explain_target;
     const char *why_query;
     const char *status_target;
@@ -236,6 +259,7 @@ int bdt_file_exists(const char *path);
 int bdt_dir_exists(const char *path);
 int bdt_path_join(char *out, size_t out_size, const char *a, const char *b);
 int bdt_abs_path(char *out, size_t out_size, const char *path);
+int bdt_path_is_absolute(const char *path);
 char *bdt_trim(char *s);
 int bdt_split_list(const char *text, char items[][512], size_t max_items);
 int bdt_split_delim(const char *text, char delim, char items[][512], size_t max_items);

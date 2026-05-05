@@ -10,7 +10,9 @@
 #include <sys/stat.h>
 #endif
 
+#ifndef BDT_MAX_QUICK_MANIFESTS
 #define BDT_MAX_QUICK_MANIFESTS 8192
+#endif
 
 typedef struct {
     char target[96];

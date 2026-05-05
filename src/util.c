@@ -47,6 +47,16 @@ int bdt_path_join(char *out, size_t out_size, const char *a, const char *b) {
     return snprintf(out, out_size, "%s%s%s", a, need_sep ? (char[]){sep, 0} : "", b ? b : "") < (int)out_size ? 0 : -1;
 }
 
+int bdt_path_is_absolute(const char *path) {
+    if (!path || !*path) return 0;
+    if (path[0] == '/' || path[0] == '\\') return 1;
+#ifdef _WIN32
+    if (((path[0] >= 'A' && path[0] <= 'Z') || (path[0] >= 'a' && path[0] <= 'z')) && path[1] == ':') return 1;
+    if (path[0] == '\\' && path[1] == '\\') return 1;
+#endif
+    return 0;
+}
+
 int bdt_abs_path(char *out, size_t out_size, const char *path) {
 #ifdef _WIN32
     DWORD n = GetFullPathNameA(path, (DWORD)out_size, out, NULL);
@@ -193,20 +203,7 @@ int bdt_parse_cli(int argc, char **argv, BdtCli *cli) {
         else if (!strcmp(a, "--trace-out") && i + 1 < argc) cli->trace_path = argv[++i];
         else if (!strcmp(a, "-v") || !strcmp(a, "--verbose")) cli->verbose = 1;
         else if (!strcmp(a, "-h") || !strcmp(a, "--help")) {
-            printf("bdt [target] [--project file] [-j N] [--list] [--scan] [--graph] [--no-cache]\n");
-            printf("bdt view\n");
-            printf("bdt why <file|target>\n");
-            printf("bdt status [target]\n");
-            printf("bdt trace [target] [--trace-out file]\n");
-            printf("bdt bench [target] [--trace-out file]\n");
-            printf("bdt explain <target>\n");
-            printf("bdt clean <target>\n");
-            printf("bdt doctor\n");
-            printf("bdt cache export [archive]\n");
-            printf("bdt cache import [archive]\n");
-            printf("bdt cache pull|push\n");
-            printf("bdt log-style [default|kernel]\n");
-            exit(0);
+            cli->help = 1;
         } else if (a[0] != '-') {
             cli->target = a;
         }
