@@ -188,7 +188,8 @@ static int why_c_apps(BdtProject *project, BdtTarget *target, const char *query)
     }
     for (size_t i = 0; i < target->app_rule_count; ++i) {
         BdtAppRule *rule = &target->app_rules[i];
-        if (text_mentions_path(rule->sources, query) || text_mentions_path(rule->source_dirs, query)) {
+        if (text_mentions_path(rule->sources, query) || text_mentions_path(rule->source_dirs, query) ||
+            text_mentions_path(rule->objects, query)) {
             printf("file/path: %s\n  used by app: %s\n  target: %s\n", query, rule->name, target->name);
             found = 1;
         }

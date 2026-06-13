@@ -508,6 +508,17 @@ static int compile_rule_sources(BdtProject *project, BdtTarget *target, const ch
     return 0;
 }
 
+static void append_rule_objects(const BdtProject *project, const BdtAppRule *rule, char *objects, size_t objects_size) {
+    if (!rule || !rule->objects[0]) return;
+    char expanded[BDT_MAX_TEXT];
+    char items[BDT_MAX_ITEMS][512];
+    bdt_expand_list_vars(project, rule->objects, expanded, sizeof(expanded));
+    int count = bdt_split_list(expanded, items, BDT_MAX_ITEMS);
+    for (int i = 0; i < count; ++i) {
+        append_object_unique(objects, objects_size, items[i]);
+    }
+}
+
 static int compute_c_apps_status(BdtProject *project, BdtTarget *target, size_t *compile_count, size_t *link_count,
                                  size_t *app_relink_count, int emit_cache_hit) {
     char main_dir[1024], obj_root[1024], out_dir[1024], linker[1024], entry_suffix[64], secondary_suffix[64];
@@ -593,6 +604,7 @@ static int compute_c_apps_status(BdtProject *project, BdtTarget *target, size_t 
                                               : count_rule_sources_needs(project, target, app, rule, obj_root, objects, sizeof(objects));
         total_steps += rule_needs;
         if (compile_count) *compile_count += rule_needs;
+        append_rule_objects(project, rule, objects, sizeof(objects));
         for (size_t e = 0; e < top_all_count; ++e) {
             const char *top_base = strrchr(top_all[e].rel, '/');
             top_base = top_base ? top_base + 1 : top_all[e].rel;
@@ -601,6 +613,7 @@ static int compute_c_apps_status(BdtProject *project, BdtTarget *target, size_t 
             if (strncmp(top_base, prefix, strlen(prefix))) continue;
             if (ends_with(top_all[e].rel, entry_suffix) || (secondary_suffix[0] && ends_with(top_all[e].rel, secondary_suffix))) continue;
             if (source_list_contains_rel(project, target->runtime_sources, top_all[e].rel)) continue;
+            if (rule_excludes_source(rule, top_all[e].rel)) continue;
             char shared_obj[1024];
             obj_for_rel(obj_root, top_all[e].rel, shared_obj, sizeof(shared_obj));
             if (object_list_contains(count_shared_objs, shared_obj) || object_list_contains(count_shared_runtime_objs, shared_obj)) continue;
@@ -619,6 +632,7 @@ static int compute_c_apps_status(BdtProject *project, BdtTarget *target, size_t 
         for (size_t e = 0; e < extra_count; ++e) {
             if (ends_with(extras[e].rel, entry_suffix) || (secondary_suffix[0] && ends_with(extras[e].rel, secondary_suffix))) continue;
             if (source_list_contains_rel(project, target->runtime_sources, extras[e].rel)) continue;
+            if (rule_excludes_source(rule, extras[e].rel)) continue;
             char shared_obj[1024];
             obj_for_rel(obj_root, extras[e].rel, shared_obj, sizeof(shared_obj));
             if (object_list_contains(count_shared_objs, shared_obj) || object_list_contains(count_shared_runtime_objs, shared_obj)) continue;
@@ -761,6 +775,7 @@ int bdt_run_c_apps_target(BdtProject *project, BdtTarget *target) {
             strncat(objects, runtime_objs, sizeof(objects) - strlen(objects) - 1);
         }
         if (compile_rule_sources(project, target, app, rule, obj_root, objects, sizeof(objects), &progress, total_steps) != 0) return -1;
+        append_rule_objects(project, rule, objects, sizeof(objects));
 
         AppFile extras[BDT_MAX_ITEMS];
         size_t extra_count = 0;
@@ -773,6 +788,7 @@ int bdt_run_c_apps_target(BdtProject *project, BdtTarget *target) {
             if (strncmp(top_base, prefix, strlen(prefix))) continue;
             if (ends_with(top_all[e].rel, entry_suffix) || (secondary_suffix[0] && ends_with(top_all[e].rel, secondary_suffix))) continue;
             if (source_list_contains_rel(project, target->runtime_sources, top_all[e].rel)) continue;
+            if (rule_excludes_source(rule, top_all[e].rel)) continue;
             char shared_obj[1024];
             obj_for_rel(obj_root, top_all[e].rel, shared_obj, sizeof(shared_obj));
             if (object_list_contains(shared_objs, shared_obj) || object_list_contains(runtime_objs, shared_obj)) continue;
@@ -787,6 +803,7 @@ int bdt_run_c_apps_target(BdtProject *project, BdtTarget *target) {
         for (size_t e = 0; e < extra_count; ++e) {
             if (ends_with(extras[e].rel, entry_suffix) || (secondary_suffix[0] && ends_with(extras[e].rel, secondary_suffix))) continue;
             if (source_list_contains_rel(project, target->runtime_sources, extras[e].rel)) continue;
+            if (rule_excludes_source(rule, extras[e].rel)) continue;
             char shared_obj[1024];
             obj_for_rel(obj_root, extras[e].rel, shared_obj, sizeof(shared_obj));
             if (object_list_contains(shared_objs, shared_obj) || object_list_contains(runtime_objs, shared_obj)) continue;

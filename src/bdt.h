@@ -62,6 +62,7 @@ typedef struct {
     char name[96];
     char sources[BDT_MAX_TEXT];
     char source_dirs[BDT_MAX_TEXT];
+    char objects[BDT_MAX_TEXT];
     char exclude_sources[BDT_MAX_TEXT];
     char cflags[BDT_MAX_TEXT];
     char output_group[96];

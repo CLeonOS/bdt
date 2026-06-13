@@ -299,6 +299,7 @@ cflags = {APP_CFLAGS}
 ldflags = {APP_LDFLAGS}
 app.browser.cflags = {TLS_CFLAGS},{HTML_CFLAGS}
 app.browser.sources = {TLS_SOURCES}
+app.shell.objects = {root}/build/lib/libshell_rust.a
 app.viewer.output_group = tools
 app.shell.include_runtime = false
 ```
@@ -308,6 +309,7 @@ Per-application fields:
 - `app.NAME.cflags`: extra flags for one app.
 - `app.NAME.sources`: extra source files for one app.
 - `app.NAME.source_dirs`: extra recursive source directories.
+- `app.NAME.objects`: extra object files or static libraries to link into one app.
 - `app.NAME.exclude_sources`: source basenames or relative paths to skip.
 - `app.NAME.output_group`: output group for one app.
 - `app.NAME.include_runtime`: whether to link shared runtime sources.

@@ -149,6 +149,7 @@ static void load_targets(BdtProject *project, const BdtConfig *config) {
                     if (rule) {
                         if (!strcmp(field, "sources")) snprintf(rule->sources, sizeof(rule->sources), "%s", p->value);
                         else if (!strcmp(field, "source_dirs")) snprintf(rule->source_dirs, sizeof(rule->source_dirs), "%s", p->value);
+                        else if (!strcmp(field, "objects")) snprintf(rule->objects, sizeof(rule->objects), "%s", p->value);
                         else if (!strcmp(field, "exclude_sources")) snprintf(rule->exclude_sources, sizeof(rule->exclude_sources), "%s", p->value);
                         else if (!strcmp(field, "cflags")) snprintf(rule->cflags, sizeof(rule->cflags), "%s", p->value);
                         else if (!strcmp(field, "output_group")) snprintf(rule->output_group, sizeof(rule->output_group), "%s", p->value);

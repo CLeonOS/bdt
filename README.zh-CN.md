@@ -293,6 +293,7 @@ cflags = {APP_CFLAGS}
 ldflags = {APP_LDFLAGS}
 app.browser.cflags = {TLS_CFLAGS},{HTML_CFLAGS}
 app.browser.sources = {TLS_SOURCES}
+app.shell.objects = {root}/build/lib/libshell_rust.a
 app.viewer.output_group = tools
 app.shell.include_runtime = false
 ```
@@ -302,6 +303,7 @@ app.shell.include_runtime = false
 - `app.NAME.cflags`：某个应用的额外编译参数。
 - `app.NAME.sources`：某个应用额外源码。
 - `app.NAME.source_dirs`：某个应用额外递归源码目录。
+- `app.NAME.objects`：链接到某个应用的额外 object 文件或静态库。
 - `app.NAME.exclude_sources`：需要跳过的源码文件名或相对路径。
 - `app.NAME.output_group`：指定某个应用输出到哪个输出分组。
 - `app.NAME.include_runtime`：是否链接共享运行时源码。
